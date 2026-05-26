@@ -1,0 +1,22 @@
+# Environment — NEVER COMMIT
+.env
+
+# Hardhat
+cache/
+artifacts/
+typechain-types/
+
+# Node
+node_modules/
+dist/
+
+# Coverage
+coverage/
+coverage.json
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
