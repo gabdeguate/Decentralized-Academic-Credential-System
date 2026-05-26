@@ -1,11 +1,11 @@
-// Contract addresses — fall back to deployed Sepolia addresses.
+// Contract addresses — fall back to current deployed Sepolia addresses.
 export const REGISTRY_ADDRESS: string =
   (import.meta.env.VITE_REGISTRY_ADDRESS as string | undefined) ??
-  "0x3193c25d8A69758B8836c47f6105d4cD6d46563e";
+  "0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D";
 
 export const CREDENTIAL_ADDRESS: string =
   (import.meta.env.VITE_CREDENTIAL_ADDRESS as string | undefined) ??
-  "0x403493392013806b3dC5Bea7C031e02E641ad336";
+  "0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c";
 
 export const SEPOLIA_CHAIN_ID = 11155111n;
 export const ETHERSCAN_TX    = "https://sepolia.etherscan.io/tx/";
