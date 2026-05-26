@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 /// @title ICredential
 /// @notice Interface for issuing, revoking, and verifying credentials on-chain.
 /// @dev Only keccak256 hashes are stored. Raw credential data must remain off-chain.
+///      metadataURI holds an IPFS reference ("ipfs://CID") to the off-chain document.
 interface ICredential {
     // -------------------------------------------------------------------------
     // Events
@@ -13,7 +14,8 @@ interface ICredential {
     event CredentialIssued(
         bytes32 indexed credentialHash,
         address indexed issuer,
-        address indexed holder
+        address indexed holder,
+        string metadataURI
     );
 
     /// @notice Emitted when a credential is revoked by its issuer.
@@ -41,9 +43,10 @@ interface ICredential {
     // -------------------------------------------------------------------------
 
     /// @notice Issue a credential. Caller must be an authorized issuer.
-    /// @param holder Address of the credential holder.
+    /// @param holder       Address of the credential holder.
     /// @param credentialHash keccak256 hash of off-chain credential data.
-    function issueCredential(address holder, bytes32 credentialHash) external;
+    /// @param metadataURI  IPFS URI of the diploma document (e.g. "ipfs://CID"), or "" if none.
+    function issueCredential(address holder, bytes32 credentialHash, string calldata metadataURI) external;
 
     /// @notice Revoke a credential. Caller must be the original issuer.
     /// @param credentialHash Hash of the credential to revoke.
@@ -67,7 +70,7 @@ interface ICredential {
     // View functions
     // -------------------------------------------------------------------------
 
-    /// @notice Verify a credential. Caller is the verifier.
+    /// @notice Verify a credential. Caller is the verifier (msg.sender).
     /// @dev Checks four conditions in order:
     ///      1. Credential exists (hash known)
     ///      2. Original issuer is still a registered issuer
@@ -77,4 +80,9 @@ interface ICredential {
     /// @return valid  True if all four conditions pass.
     /// @return reason Human-readable failure reason; empty string on success.
     function verifyCredential(bytes32 credentialHash) external view returns (bool valid, string memory reason);
+
+    /// @notice Return the IPFS URI stored when the credential was issued.
+    /// @param credentialHash Hash of the credential.
+    /// @return IPFS URI string ("ipfs://CID") or empty string if none was set.
+    function getMetadataURI(bytes32 credentialHash) external view returns (string memory);
 }

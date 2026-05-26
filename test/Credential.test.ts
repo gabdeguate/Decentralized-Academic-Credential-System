@@ -16,6 +16,7 @@ describe("CredentialContract", function () {
   // A fixed hash representing off-chain credential data
   const CRED_HASH = ethers.keccak256(ethers.toUtf8Bytes("student:alice|degree:CS|year:2024"));
   const OTHER_HASH = ethers.keccak256(ethers.toUtf8Bytes("student:bob|degree:EE|year:2025"));
+  const METADATA_URI = "ipfs://QmTestCID123";
 
   beforeEach(async function () {
     [owner, issuer, holder, verifier, stranger] = await ethers.getSigners();
@@ -54,49 +55,80 @@ describe("CredentialContract", function () {
 
   describe("issueCredential", function () {
     it("registered issuer can issue a credential", async function () {
-      await expect(credential.connect(issuer).issueCredential(holder.address, CRED_HASH))
+      await expect(credential.connect(issuer).issueCredential(holder.address, CRED_HASH, ""))
         .to.emit(credential, "CredentialIssued")
-        .withArgs(CRED_HASH, issuer.address, holder.address);
+        .withArgs(CRED_HASH, issuer.address, holder.address, "");
+    });
+
+    it("emits CredentialIssued with metadataURI", async function () {
+      await expect(
+        credential.connect(issuer).issueCredential(holder.address, CRED_HASH, METADATA_URI)
+      )
+        .to.emit(credential, "CredentialIssued")
+        .withArgs(CRED_HASH, issuer.address, holder.address, METADATA_URI);
     });
 
     it("emits CredentialIssued with correct args", async function () {
-      const tx = await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      const tx = await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       const receipt = await tx.wait();
       expect(receipt?.status).to.equal(1);
     });
 
     it("unregistered issuer reverts NotAuthorizedIssuer", async function () {
       await expect(
-        credential.connect(stranger).issueCredential(holder.address, CRED_HASH)
+        credential.connect(stranger).issueCredential(holder.address, CRED_HASH, "")
       ).to.be.revertedWithCustomError(credential, "NotAuthorizedIssuer");
     });
 
     it("reverts on zero holder address", async function () {
       await expect(
-        credential.connect(issuer).issueCredential(ethers.ZeroAddress, CRED_HASH)
+        credential.connect(issuer).issueCredential(ethers.ZeroAddress, CRED_HASH, "")
       ).to.be.revertedWithCustomError(credential, "ZeroAddress");
     });
 
     it("reverts on duplicate hash (CredentialAlreadyExists)", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await expect(
-        credential.connect(issuer).issueCredential(holder.address, CRED_HASH)
+        credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "")
       ).to.be.revertedWithCustomError(credential, "CredentialAlreadyExists")
         .withArgs(CRED_HASH);
     });
 
     it("same issuer can issue different hashes", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await expect(
-        credential.connect(issuer).issueCredential(holder.address, OTHER_HASH)
+        credential.connect(issuer).issueCredential(holder.address, OTHER_HASH, "")
       ).to.emit(credential, "CredentialIssued");
     });
 
     it("issuer cannot issue after being deregistered", async function () {
       await registry.connect(owner).revokeIssuer(issuer.address);
       await expect(
-        credential.connect(issuer).issueCredential(holder.address, CRED_HASH)
+        credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "")
       ).to.be.revertedWithCustomError(credential, "NotAuthorizedIssuer");
+    });
+
+    it("stores metadataURI and returns via getMetadataURI", async function () {
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, METADATA_URI);
+      expect(await credential.getMetadataURI(CRED_HASH)).to.equal(METADATA_URI);
+    });
+
+    it("getMetadataURI returns empty string when none set", async function () {
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
+      expect(await credential.getMetadataURI(CRED_HASH)).to.equal("");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getMetadataURI
+  // ---------------------------------------------------------------------------
+
+  describe("getMetadataURI", function () {
+    it("reverts CredentialNotFound for unknown hash", async function () {
+      await expect(
+        credential.getMetadataURI(CRED_HASH)
+      ).to.be.revertedWithCustomError(credential, "CredentialNotFound")
+        .withArgs(CRED_HASH);
     });
   });
 
@@ -106,7 +138,7 @@ describe("CredentialContract", function () {
 
   describe("revokeCredential", function () {
     beforeEach(async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
     });
 
     it("original issuer can revoke", async function () {
@@ -149,7 +181,7 @@ describe("CredentialContract", function () {
 
   describe("grantVerifierAccess", function () {
     beforeEach(async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
     });
 
     it("holder can grant verifier access", async function () {
@@ -201,7 +233,7 @@ describe("CredentialContract", function () {
 
   describe("revokeVerifierAccess", function () {
     beforeEach(async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
     });
 
@@ -260,7 +292,7 @@ describe("CredentialContract", function () {
     });
 
     it("returns (false, 'Issuer no longer registered') after issuer deregistered", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
       await registry.connect(owner).revokeIssuer(issuer.address);
 
@@ -270,7 +302,7 @@ describe("CredentialContract", function () {
     });
 
     it("returns (false, 'Credential revoked') after revocation", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
       await credential.connect(issuer).revokeCredential(CRED_HASH);
 
@@ -280,7 +312,7 @@ describe("CredentialContract", function () {
     });
 
     it("returns (false, 'Caller not in verifier allowlist') for unlisted caller", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
 
       const [valid, reason] = await credential.connect(stranger).verifyCredential(CRED_HASH);
       expect(valid).to.be.false;
@@ -288,7 +320,7 @@ describe("CredentialContract", function () {
     });
 
     it("returns (true, '') when all conditions pass", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
 
       const [valid, reason] = await credential.connect(verifier).verifyCredential(CRED_HASH);
@@ -298,7 +330,7 @@ describe("CredentialContract", function () {
 
     it("issuer-check precedes revoked-check (condition ordering)", async function () {
       // Revoke credential AND deregister issuer
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
       await credential.connect(issuer).revokeCredential(CRED_HASH);
       await registry.connect(owner).revokeIssuer(issuer.address);
@@ -310,7 +342,7 @@ describe("CredentialContract", function () {
     });
 
     it("re-registering issuer restores validity", async function () {
-      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH);
+      await credential.connect(issuer).issueCredential(holder.address, CRED_HASH, "");
       await credential.connect(holder).grantVerifierAccess(CRED_HASH, verifier.address);
 
       await registry.connect(owner).revokeIssuer(issuer.address);

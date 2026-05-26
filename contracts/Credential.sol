@@ -7,6 +7,7 @@ import "./IRegistry.sol";
 /// @title CredentialContract
 /// @notice Issues, revokes, and verifies academic credentials via keccak256 hashes.
 /// @dev Raw credential data is never stored on-chain. Only hashes are recorded.
+///      metadataURI stores an IPFS reference ("ipfs://CID") to the off-chain document.
 contract CredentialContract is ICredential {
     // -------------------------------------------------------------------------
     // Types
@@ -17,7 +18,8 @@ contract CredentialContract is ICredential {
         address issuer;
         address holder;
         bool revoked;
-        uint256 issuedAt;
+        uint256 issuedAt;       // 0 = does not exist (used as existence sentinel)
+        string metadataURI;     // ipfs://CID or empty string
     }
 
     // -------------------------------------------------------------------------
@@ -59,7 +61,11 @@ contract CredentialContract is ICredential {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc ICredential
-    function issueCredential(address holder, bytes32 credentialHash) external override {
+    function issueCredential(
+        address holder,
+        bytes32 credentialHash,
+        string calldata metadataURI
+    ) external override {
         if (!registry.isRegisteredIssuer(msg.sender)) revert NotAuthorizedIssuer();
         if (holder == address(0)) revert ZeroAddress();
         if (credentials[credentialHash].issuedAt != 0) revert CredentialAlreadyExists(credentialHash);
@@ -69,10 +75,11 @@ contract CredentialContract is ICredential {
             issuer: msg.sender,
             holder: holder,
             revoked: false,
-            issuedAt: block.timestamp
+            issuedAt: block.timestamp,
+            metadataURI: metadataURI
         });
 
-        emit CredentialIssued(credentialHash, msg.sender, holder);
+        emit CredentialIssued(credentialHash, msg.sender, holder, metadataURI);
     }
 
     /// @inheritdoc ICredential
@@ -117,7 +124,12 @@ contract CredentialContract is ICredential {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc ICredential
-    function verifyCredential(bytes32 credentialHash) external view override returns (bool valid, string memory reason) {
+    function verifyCredential(bytes32 credentialHash)
+        external
+        view
+        override
+        returns (bool valid, string memory reason)
+    {
         Credential storage cred = credentials[credentialHash];
 
         if (cred.issuedAt == 0) {
@@ -137,6 +149,12 @@ contract CredentialContract is ICredential {
         }
 
         return (true, "");
+    }
+
+    /// @inheritdoc ICredential
+    function getMetadataURI(bytes32 credentialHash) external view override returns (string memory) {
+        _requireExists(credentialHash);
+        return credentials[credentialHash].metadataURI;
     }
 
     // -------------------------------------------------------------------------

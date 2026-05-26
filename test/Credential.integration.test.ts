@@ -49,16 +49,26 @@ describe("CredentialContract — end-to-end flow", function () {
   // ---------------------------------------------------------------------------
 
   it("Step 2 — registered issuer issues credential to holder", async function () {
-    await expect(credential.connect(issuer).issueCredential(holder.address, credentialHash))
+    await expect(
+      credential.connect(issuer).issueCredential(holder.address, credentialHash, "ipfs://QmIntegrationTest")
+    )
       .to.emit(credential, "CredentialIssued")
-      .withArgs(credentialHash, issuer.address, holder.address);
+      .withArgs(credentialHash, issuer.address, holder.address, "ipfs://QmIntegrationTest");
   });
 
   it("Step 2a — unregistered address cannot issue", async function () {
     const otherHash = ethers.keccak256(ethers.toUtf8Bytes("other"));
     await expect(
-      credential.connect(stranger).issueCredential(holder.address, otherHash)
+      credential.connect(stranger).issueCredential(holder.address, otherHash, "")
     ).to.be.revertedWithCustomError(credential, "NotAuthorizedIssuer");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Step 2b: getMetadataURI returns stored URI
+  // ---------------------------------------------------------------------------
+
+  it("Step 2b — getMetadataURI returns stored IPFS URI", async function () {
+    expect(await credential.getMetadataURI(credentialHash)).to.equal("ipfs://QmIntegrationTest");
   });
 
   // ---------------------------------------------------------------------------
@@ -113,7 +123,7 @@ describe("CredentialContract — end-to-end flow", function () {
 
   it("Step 5a — non-issuer cannot revoke", async function () {
     const otherHash = ethers.keccak256(ethers.toUtf8Bytes("student:bob|degree:EE|year:2024"));
-    await credential.connect(issuer).issueCredential(holder.address, otherHash);
+    await credential.connect(issuer).issueCredential(holder.address, otherHash, "");
 
     await expect(
       credential.connect(stranger).revokeCredential(otherHash)
@@ -140,7 +150,7 @@ describe("CredentialContract — end-to-end flow", function () {
   it("Step 7 — owner revokes issuer registration", async function () {
     // Issue a fresh credential while issuer is still registered
     const freshHash = ethers.keccak256(ethers.toUtf8Bytes("student:carol|degree:ME|year:2025"));
-    await credential.connect(issuer).issueCredential(holder.address, freshHash);
+    await credential.connect(issuer).issueCredential(holder.address, freshHash, "");
     await credential.connect(holder).grantVerifierAccess(freshHash, verifier.address);
 
     // Verify passes before de-registration

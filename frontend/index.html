@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DACS — Decentralized Academic Credential System</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0d12;
+      --surface:   #14141e;
+      --card:      #1c1c2a;
+      --border:    #2a2a3e;
+      --accent:    #6c63ff;
+      --accent2:   #00d4aa;
+      --text:      #e0e0f0;
+      --muted:     #8080a0;
+      --success:   #1a3a2a;
+      --success-b: #00d4aa;
+      --error:     #3a1a1a;
+      --error-b:   #ff6060;
+      --pending:   #1e2a3a;
+      --pending-b: #60b0ff;
+      --issuer:    #7c4dff;
+      --holder:    #00bfa5;
+      --verifier:  #ff9800;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-bottom: 48px;
+    }
+
+    /* ─── Header ─── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .header-left h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.3px; }
+    .header-left p  { font-size: 0.77rem; color: var(--muted); margin-top: 2px; }
+    .header-left p a { color: var(--accent); text-decoration: none; }
+    .header-left p a:hover { text-decoration: underline; }
+
+    .connect-area { display: flex; align-items: center; gap: 12px; }
+    #walletStatus { font-size: 0.82rem; color: var(--muted); font-family: 'Courier New', monospace; }
+    #walletStatus.connected { color: var(--accent2); }
+
+    /* ─── Buttons ─── */
+    button {
+      cursor: pointer; border: none; border-radius: 8px;
+      font-size: 0.84rem; font-weight: 600; padding: 9px 16px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    button:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #connectBtn { background: var(--accent); color: #fff; padding: 10px 20px; }
+    #switchBtn  { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); padding: 8px 16px; font-size: 0.82rem; }
+    .btn-issuer  { background: var(--issuer);   color: #fff; width: 100%; margin-top: 10px; }
+    .btn-holder  { background: var(--holder);   color: #fff; width: 100%; margin-top: 10px; }
+    .btn-verify  { background: var(--verifier); color: #fff; width: 100%; margin-top: 10px;
+                   font-size: 0.92rem; padding: 12px; }
+    .btn-dl      { background: #0095a8; color: #fff; width: 100%; margin-top: 10px; }
+
+    /* ─── Layout ─── */
+    .panels {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      padding: 22px 28px 0;
+    }
+    @media (max-width: 960px) { .panels { grid-template-columns: 1fr; } }
+
+    /* ─── Panel ─── */
+    .panel {
+      background: var(--card);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .panel-icon {
+      width: 34px; height: 34px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem;
+    }
+    .panel-icon.issuer   { background: rgba(124,77,255,0.18); }
+    .panel-icon.holder   { background: rgba(0,191,165,0.18); }
+    .panel-icon.verifier { background: rgba(255,152,0,0.18); }
+    .panel-header h2 { font-size: 0.98rem; font-weight: 700; }
+    .panel-header p  { font-size: 0.75rem; color: var(--muted); margin-top: 1px; }
+    .panel-body { padding: 0 18px 18px; }
+
+    /* ─── Section ─── */
+    .section {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+    .section:first-child { border-top: none; }
+    .section h3 {
+      font-size: 0.78rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--muted); margin-bottom: 10px;
+    }
+    .owner-note { font-size: 0.7rem; color: #5858a0; font-weight: 400; text-transform: none; }
+
+    /* ─── Form elements ─── */
+    label {
+      display: block; font-size: 0.76rem; color: var(--muted);
+      margin-bottom: 4px; margin-top: 9px;
+    }
+    label:first-of-type { margin-top: 0; }
+    input, textarea {
+      width: 100%; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 0.82rem;
+      padding: 8px 11px; outline: none; transition: border-color 0.15s; font-family: inherit;
+    }
+    input:focus, textarea:focus { border-color: var(--accent); }
+    input::placeholder, textarea::placeholder { color: #50506a; }
+    textarea { resize: vertical; min-height: 56px; line-height: 1.5; }
+
+    /* File input */
+    input[type="file"] {
+      padding: 7px 10px; cursor: pointer; font-size: 0.79rem;
+    }
+    input[type="file"]::file-selector-button {
+      background: var(--border); color: var(--text); border: none;
+      border-radius: 5px; padding: 4px 10px; margin-right: 10px;
+      cursor: pointer; font-size: 0.78rem;
+    }
+    input[type="file"]::file-selector-button:hover { background: #3a3a55; }
+
+    /* ─── Hash preview ─── */
+    .hash-preview {
+      margin-top: 6px; display: none;
+      font-family: 'Courier New', monospace; font-size: 0.67rem; color: var(--accent2);
+      background: rgba(0,212,170,0.06); border: 1px solid rgba(0,212,170,0.18);
+      border-radius: 6px; padding: 6px 9px; word-break: break-all;
+    }
+    .hash-preview-label { font-size: 0.62rem; color: var(--muted); margin-bottom: 2px; }
+
+    /* ─── Result ─── */
+    .result {
+      margin-top: 9px; padding: 9px 11px; border-radius: 8px;
+      font-size: 0.79rem; line-height: 1.6; display: none; word-break: break-all;
+    }
+    .result.show    { display: block; }
+    .result.success { background: var(--success);  border: 1px solid var(--success-b); color: #80ffcc; }
+    .result.error   { background: var(--error);    border: 1px solid var(--error-b);   color: #ff9090; }
+    .result.pending { background: var(--pending);  border: 1px solid var(--pending-b); color: #90c8ff; }
+
+    .result a {
+      color: inherit; font-family: 'Courier New', monospace;
+      font-size: 0.72rem; display: block; margin-top: 3px; opacity: 0.85;
+    }
+    .result a:hover { opacity: 1; }
+    .mono { font-family: 'Courier New', monospace; font-size: 0.7rem; opacity: 0.75; display: block; margin-top: 2px; }
+
+    /* ─── Verifier Dashboard ─── */
+    .verify-dashboard {
+      display: none;
+      margin-top: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .verify-dashboard.show     { display: block; }
+    .verify-dashboard.verified { border-color: rgba(0,212,170,0.4);  box-shadow: 0 0 0 1px rgba(0,212,170,0.08); }
+    .verify-dashboard.invalid  { border-color: rgba(255,96,96,0.4);  box-shadow: 0 0 0 1px rgba(255,96,96,0.08); }
+    .verify-dashboard.errored  { border-color: rgba(255,152,0,0.35); }
+
+    .dash-status {
+      display: flex; align-items: center; gap: 16px;
+      padding: 18px 20px; border-bottom: 1px solid var(--border);
+    }
+    .dash-status.verified { background: rgba(0,212,170,0.07); }
+    .dash-status.invalid  { background: rgba(255,96,96,0.07); }
+    .dash-status.errored  { background: rgba(255,152,0,0.06); }
+
+    .dash-icon  { font-size: 2rem; line-height: 1; }
+    .dash-label { font-size: 1rem; font-weight: 800; letter-spacing: 0.4px; }
+    .dash-status.verified .dash-label { color: var(--success-b); }
+    .dash-status.invalid  .dash-label { color: var(--error-b); }
+    .dash-status.errored  .dash-label { color: var(--verifier); }
+    .dash-reason { font-size: 0.79rem; color: var(--muted); margin-top: 3px; }
+
+    .dash-grid  { padding: 4px 0 8px; }
+    .dash-row {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 8px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.025);
+    }
+    .dash-row:last-child { border-bottom: none; }
+    .dash-row:hover      { background: rgba(255,255,255,0.02); }
+
+    .dash-key {
+      flex-shrink: 0; width: 84px;
+      font-size: 0.71rem; font-weight: 700; letter-spacing: 0.3px;
+      color: var(--muted); padding-top: 2px; text-transform: uppercase;
+    }
+    .dash-val      { font-size: 0.82rem; color: var(--text); flex: 1; word-break: break-all; }
+    .mono-val      { font-family: 'Courier New', monospace; font-size: 0.73rem; color: #c0c0e0; }
+    .dash-link     { color: var(--accent2); text-decoration: none; }
+    .dash-link:hover { text-decoration: underline; }
+
+    .dash-issuer-wrap { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+    .dash-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 0.67rem; font-weight: 700; padding: 2px 9px;
+      border-radius: 4px; width: fit-content;
+    }
+    .dash-badge.ok   { background: rgba(0,212,170,0.14); color: var(--success-b); border: 1px solid rgba(0,212,170,0.25); }
+    .dash-badge.warn { background: rgba(255,96,96,0.14);  color: var(--error-b);   border: 1px solid rgba(255,96,96,0.25); }
+
+    .dash-loading {
+      color: #606080; font-size: 0.75rem; font-style: italic;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    @keyframes shimmer { 0%,100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+
+    .text-ok   { color: var(--success-b); font-weight: 600; }
+    .text-warn { color: var(--error-b);   font-weight: 600; }
+
+    /* ─── Hash field shorthand ─── */
+    .hash-row { display: flex; gap: 8px; margin-top: 9px; }
+    .hash-row input { flex: 1; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER -->
+<header>
+  <div class="header-left">
+    <h1>DACS — Decentralized Academic Credential System</h1>
+    <p>
+      Sepolia &nbsp;·&nbsp;
+      Registry: <a href="https://sepolia.etherscan.io/address/0x3193c25d8A69758B8836c47f6105d4cD6d46563e" target="_blank">0x3193…563e</a>
+      &nbsp;·&nbsp;
+      Credential: <a href="https://sepolia.etherscan.io/address/0x403493392013806b3dC5Bea7C031e02E641ad336" target="_blank">0x4034…d336</a>
+    </p>
+  </div>
+  <div class="connect-area">
+    <span id="walletStatus">Not connected</span>
+    <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+    <button id="switchBtn" onclick="switchAccount()" style="display:none">Switch Account</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════ PANELS -->
+<div class="panels">
+
+  <!-- ─────────────── ISSUER PANEL ─────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-icon issuer">🏛</div>
+      <div>
+        <h2>Issuer</h2>
+        <p>Institution — must be registered by owner</p>
+      </div>
+    </div>
+    <div class="panel-body">
+
+      <!-- Register Issuer -->
+      <div class="section">
+        <h3>Register Issuer <span class="owner-note">(owner only)</span></h3>
+        <label>Issuer Address</label>
+        <input id="regIssuerAddr" placeholder="0x…" />
+        <button class="btn-issuer" onclick="doRegisterIssuer(this)">Register Issuer</button>
+        <div id="regIssuerResult" class="result"></div>
+      </div>
+
+      <!-- Issue Credential -->
+      <div class="section">
+        <h3>Issue Credential</h3>
+        <label>Student Address (holder)</label>
+        <input id="issueStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('issue')" />
+        <label>Degree Type</label>
+        <input id="issueDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('issue')" />
+        <label>Graduation Date</label>
+        <input id="issueGradDate" placeholder="2024-05"
+          oninput="updateCredHash('issue')" />
+        <div id="issueHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="issueHashValue"></span>
+        </div>
+        <label>Diploma PDF</label>
+        <input type="file" id="issuePdf" accept=".pdf" />
+        <button class="btn-issuer" onclick="doIssueCredential(this)">Issue Credential + Upload PDF</button>
+        <div id="issueResult" class="result"></div>
+      </div>
+
+      <!-- Revoke Credential -->
+      <div class="section">
+        <h3>Revoke Credential</h3>
+        <label>Student Address</label>
+        <input id="revokeStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('revoke')" />
+        <label>Degree Type</label>
+        <input id="revokeDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('revoke')" />
+        <label>Graduation Date</label>
+        <input id="revokeGradDate" placeholder="2024-05"
+          oninput="updateCredHash('revoke')" />
+        <div id="revokeHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="revokeHashValue"></span>
+        </div>
+        <button class="btn-issuer" onclick="doRevokeCredential(this)">Revoke Credential</button>
+        <div id="revokeResult" class="result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─────────────── HOLDER PANEL ─────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-icon holder">🎓</div>
+      <div>
+        <h2>Holder</h2>
+        <p>Student — controls verifier access &amp; downloads</p>
+      </div>
+    </div>
+    <div class="panel-body">
+
+      <!-- Grant Verifier Access -->
+      <div class="section">
+        <h3>Grant Verifier Access</h3>
+        <label>Student Address</label>
+        <input id="grantStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('grant')" />
+        <label>Degree Type</label>
+        <input id="grantDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('grant')" />
+        <label>Graduation Date</label>
+        <input id="grantGradDate" placeholder="2024-05"
+          oninput="updateCredHash('grant')" />
+        <div id="grantHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="grantHashValue"></span>
+        </div>
+        <label>Verifier Address</label>
+        <input id="grantVerifier" placeholder="0x…" />
+        <button class="btn-holder" onclick="doGrantAccess(this)">Grant Access</button>
+        <div id="grantResult" class="result"></div>
+      </div>
+
+      <!-- Revoke Verifier Access -->
+      <div class="section">
+        <h3>Revoke Verifier Access</h3>
+        <label>Student Address</label>
+        <input id="revokeAccessStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('revokeAccess')" />
+        <label>Degree Type</label>
+        <input id="revokeAccessDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('revokeAccess')" />
+        <label>Graduation Date</label>
+        <input id="revokeAccessGradDate" placeholder="2024-05"
+          oninput="updateCredHash('revokeAccess')" />
+        <div id="revokeAccessHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="revokeAccessHashValue"></span>
+        </div>
+        <label>Verifier Address</label>
+        <input id="revokeAccessVerifier" placeholder="0x…" />
+        <button class="btn-holder" onclick="doRevokeAccess(this)">Revoke Access</button>
+        <div id="revokeAccessResult" class="result"></div>
+      </div>
+
+      <!-- Download Diploma -->
+      <div class="section">
+        <h3>Download Diploma</h3>
+        <label>Student Address</label>
+        <input id="dlStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('dl')" />
+        <label>Degree Type</label>
+        <input id="dlDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('dl')" />
+        <label>Graduation Date</label>
+        <input id="dlGradDate" placeholder="2024-05"
+          oninput="updateCredHash('dl')" />
+        <div id="dlHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="dlHashValue"></span>
+        </div>
+        <button class="btn-dl" onclick="doDownloadDiploma(this)">⬇ Download Diploma PDF</button>
+        <div id="dlResult" class="result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─────────────── VERIFIER PANEL ─────────────── -->
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-icon verifier">🔍</div>
+      <div>
+        <h2>Verifier</h2>
+        <p>Connected wallet is msg.sender — must be on allowlist</p>
+      </div>
+    </div>
+    <div class="panel-body">
+
+      <div class="section" style="border-top:none; margin-top:6px;">
+        <h3>Verify Credential</h3>
+        <label>Student Address</label>
+        <input id="verifyStudentAddr" placeholder="0x…"
+          oninput="updateCredHash('verify')" />
+        <label>Degree Type</label>
+        <input id="verifyDegreeType" placeholder="Bachelor of Computer Science"
+          oninput="updateCredHash('verify')" />
+        <label>Graduation Date</label>
+        <input id="verifyGradDate" placeholder="2024-05"
+          oninput="updateCredHash('verify')" />
+        <div id="verifyHashPreview" class="hash-preview">
+          <div class="hash-preview-label">solidityPackedKeccak256 →</div>
+          <span id="verifyHashValue"></span>
+        </div>
+        <button class="btn-verify" onclick="doVerify(this)">Verify Credential</button>
+
+        <!-- ── Verifier Dashboard ── -->
+        <div id="verifyDashboard" class="verify-dashboard">
+
+          <!-- Status header -->
+          <div id="dashStatus" class="dash-status">
+            <span id="dashIcon"   class="dash-icon"></span>
+            <div>
+              <div id="dashLabel"  class="dash-label"></div>
+              <div id="dashReason" class="dash-reason"></div>
+            </div>
+          </div>
+
+          <!-- Detail rows -->
+          <div class="dash-grid">
+
+            <div class="dash-row">
+              <span class="dash-key">Cred ID</span>
+              <span id="dashCredId" class="dash-val mono-val"></span>
+            </div>
+
+            <div class="dash-row">
+              <span class="dash-key">Holder</span>
+              <span id="dashHolder" class="dash-val mono-val"></span>
+            </div>
+
+            <div class="dash-row">
+              <span class="dash-key">Issuer</span>
+              <div class="dash-issuer-wrap">
+                <span id="dashIssuer"    class="mono-val"></span>
+                <span id="dashIssuerReg" class="dash-badge"></span>
+              </div>
+            </div>
+
+            <div class="dash-row">
+              <span class="dash-key">Issued</span>
+              <span id="dashIssued"  class="dash-val"></span>
+            </div>
+
+            <div class="dash-row">
+              <span class="dash-key">Revocation</span>
+              <span id="dashRevoked" class="dash-val"></span>
+            </div>
+
+            <div class="dash-row" id="dashDiplomaRow" style="display:none">
+              <span class="dash-key">Diploma</span>
+              <a id="dashDiplomaLink" class="dash-val dash-link"
+                 href="#" target="_blank" rel="noopener"></a>
+            </div>
+
+          </div><!-- /.dash-grid -->
+        </div><!-- /#verifyDashboard -->
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /.panels -->
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
