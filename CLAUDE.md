@@ -7,12 +7,18 @@ Ethereum Sepolia. Hardhat + Ethers.js v6. Two-contract system: registry + creden
 ```
 dacs/
 ├── contracts/
+│   ├── IRegistry.sol       # Interface for RegistryContract
+│   ├── ICredential.sol     # Interface for CredentialContract
 │   ├── Registry.sol        # RegistryContract — authorized issuer management
 │   └── Credential.sol      # CredentialContract — issue/revoke/verify credentials
-├── test/                   # Hardhat tests (Ethers.js v6)
-├── frontend/               # Frontend (reads chain state, calls contracts)
-├── scripts/                # Deploy scripts
-├── hardhat.config.js
+├── ignition/
+│   └── modules/DACS.ts     # Hardhat Ignition deployment module
+├── test/
+│   ├── Registry.test.ts
+│   ├── Credential.test.ts
+│   └── Credential.integration.test.ts
+├── frontend/               # Vite + TypeScript frontend
+├── hardhat.config.ts
 └── package.json
 ```
 
@@ -29,115 +35,167 @@ npx hardhat compile
 npx hardhat test
 
 # Test (single file)
-npx hardhat test test/Registry.test.js
-npx hardhat test test/Credential.test.js
+npx hardhat test test/Registry.test.ts
+npx hardhat test test/Credential.test.ts
 
 # Coverage
 npx hardhat coverage
 
-# Deploy to Sepolia
-npx hardhat run scripts/deploy.js --network sepolia
-
-# Verify on Etherscan
-npx hardhat verify --network sepolia <CONTRACT_ADDRESS> <CONSTRUCTOR_ARGS>
-
-# Local node
+# Local node (Terminal 1)
 npx hardhat node
 
-# Deploy to localhost
-npx hardhat run scripts/deploy.js --network localhost
+# Deploy to localhost (Terminal 2)
+npx hardhat ignition deploy ignition/modules/DACS.ts --network localhost
+
+# Deploy to Sepolia
+npm run deploy:sepolia
+# expands to: hardhat ignition deploy ignition/modules/DACS.ts --network sepolia --verify
+
+# Verify on Etherscan (if skipped during deploy)
+./node_modules/.bin/hardhat ignition verify chain-11155111 --include-unrelated-contracts
 ```
 
 ## Environment
 
-`.env` required (never commit):
+Root `.env` required (never commit):
 ```
-SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/<KEY>
-PRIVATE_KEY=0x...
+SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/<KEY>
+PRIVATE_KEY=0x...   # 0x + 64 hex chars
 ETHERSCAN_API_KEY=...
 ```
+
+Frontend `frontend/.env` required (never commit):
+```
+VITE_PINATA_API_KEY=...
+VITE_PINATA_SECRET_API_KEY=...
+VITE_REGISTRY_ADDRESS=0x...
+VITE_CREDENTIAL_ADDRESS=0x...
+```
+
+## Deployed Addresses (Sepolia)
+
+```json
+{
+  "DACSModule#RegistryContract":  "0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D",
+  "DACSModule#CredentialContract": "0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c"
+}
+```
+
+Etherscan:
+- Registry:   https://sepolia.etherscan.io/address/0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D
+- Credential: https://sepolia.etherscan.io/address/0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c
 
 ## Contracts
 
 ### Registry.sol — `RegistryContract`
 
-Manages authorized issuers. Owner-controlled.
+Manages authorized issuers. Owner-controlled (OZ Ownable v5).
 
 **Storage:**
-- `address owner` — deployer, set in constructor
-- `mapping(address => bool) authorizedIssuers`
+- `mapping(address => bool) private _registeredIssuers`
 
 **Functions:**
-- `addIssuer(address)` — owner only; emits `IssuerAdded`
-- `removeIssuer(address)` — owner only; emits `IssuerRemoved`
-- `isAuthorized(address) view returns (bool)`
+- `registerIssuer(address issuer)` — onlyOwner; reverts `ZeroAddress`, `AlreadyRegistered(issuer)`; emits `IssuerAdded`
+- `revokeIssuer(address issuer)` — onlyOwner; reverts `NotRegistered(issuer)`; emits `IssuerRemoved`
+- `isRegisteredIssuer(address issuer) view returns (bool)`
 
 **Events:**
 - `IssuerAdded(address indexed issuer)`
 - `IssuerRemoved(address indexed issuer)`
 
+**Custom Errors:**
+- `ZeroAddress()`
+- `AlreadyRegistered(address issuer)`  — selector `0x45ed80e9`
+- `NotRegistered(address issuer)`
+
 ### Credential.sol — `CredentialContract`
 
-Issues, revokes, verifies credentials via keccak256 hashes. References `RegistryContract`.
+Issues, revokes, verifies credentials via keccak256 hashes. Stores IPFS metadataURI.
 
 **Storage:**
-```
+```solidity
 struct Credential {
-    bytes32 credentialHash;   // keccak256 of off-chain data
+    bytes32 credentialHash;  // keccak256 of off-chain data
     address issuer;
     address holder;
     bool revoked;
-    uint256 issuedAt;
+    uint256 issuedAt;        // 0 = does not exist
+    string metadataURI;      // "ipfs://CID" or ""
 }
 
-mapping(bytes32 => Credential) credentials
-mapping(bytes32 => mapping(address => bool)) verifierAccess  // hash => verifier => allowed
+mapping(bytes32 => Credential) private credentials;
+mapping(bytes32 => mapping(address => bool)) private verifierAccess;
+IRegistry public immutable registry;
 ```
 
 **Functions:**
-- `issueCredential(address holder, bytes32 credentialHash)` — authorized issuer only; emits `CredentialIssued`
-- `revokeCredential(bytes32 credentialHash)` — issuer of that credential only; emits `CredentialRevoked`
+- `issueCredential(address holder, bytes32 credentialHash, string calldata metadataURI)` — registered issuer only; emits `CredentialIssued`
+- `revokeCredential(bytes32 credentialHash)` — original issuer only; emits `CredentialRevoked`
 - `grantVerifierAccess(bytes32 credentialHash, address verifier)` — holder only; emits `VerifierAccessGranted`
 - `revokeVerifierAccess(bytes32 credentialHash, address verifier)` — holder only; emits `VerifierAccessRevoked`
-- `verifyCredential(bytes32 credentialHash, address verifier) view returns (bool)` — returns true if credential exists, not revoked, verifier has access
+- `verifyCredential(bytes32 credentialHash) view returns (bool valid, string reason)` — `msg.sender` IS the verifier; zero gas
+- `getMetadataURI(bytes32 credentialHash) view returns (string)` — reverts `CredentialNotFound` if not exists
 
 **Events:**
-- `CredentialIssued(bytes32 indexed credentialHash, address indexed issuer, address indexed holder)`
+- `CredentialIssued(bytes32 indexed credentialHash, address indexed issuer, address indexed holder, string metadataURI)`
 - `CredentialRevoked(bytes32 indexed credentialHash, address indexed issuer)`
 - `VerifierAccessGranted(bytes32 indexed credentialHash, address indexed holder, address indexed verifier)`
 - `VerifierAccessRevoked(bytes32 indexed credentialHash, address indexed holder, address indexed verifier)`
 
+**Custom Errors (selectors):**
+- `ZeroAddress()`                              — `0xd92e233d`
+- `NotAuthorizedIssuer()`                      — `0x3557a788`
+- `NotCredentialIssuer()`                      — `0x6541186c`
+- `NotCredentialHolder()`                      — `0x7575188f`
+- `CredentialAlreadyExists(bytes32)`           — `0x87dbb506`
+- `CredentialNotFound(bytes32)`                — `0x0d99a0d1`
+- `CredentialAlreadyRevoked(bytes32)`          — `0xaac64f45`
+
 ## Key Rules
 
 ### Access Control
-- Only authorized issuers (per RegistryContract) can call `issueCredential`
+- Only `owner` (deployer) can call `registerIssuer` / `revokeIssuer`
+- Only registered issuers can call `issueCredential`
 - Only the original issuer of a credential can call `revokeCredential`
 - Only the credential holder can call `grantVerifierAccess` / `revokeVerifierAccess`
-- `verifyCredential` is `view` — no state changes, no gas for callers
+- `verifyCredential` is `view` — no gas; `msg.sender` is the verifier being checked
 
 ### Data Privacy
 - **Raw credential data never stored on-chain**
-- Only `keccak256` hash stored; off-chain data lives in IPFS or issuer backend
-- Hash must be computed off-chain and passed in; contract does not hash inputs
+- Only `keccak256` hash stored on-chain; diploma PDF uploaded to IPFS via Pinata
+- `metadataURI = "ipfs://CID"` stored on-chain; fetched via Pinata gateway for download
+- Hash computed off-chain with `solidityPackedKeccak256(["address","string","string"], [studentAddr, degreeType, gradDate])`
 
 ### State Changes
 - Every state-changing function must emit an event
 - No silent state mutations
 
+### Ignition Redeployment
+If contracts change (bytecode mismatch error IGN723):
+```bash
+rm -rf ignition/deployments/chain-11155111
+npm run deploy:sepolia
+```
+Then update `frontend/.env` with new addresses and restart dev server.
+
 ### Ethers.js v6 Patterns
 ```js
 // v6: BigInt not BigNumber
-const tx = await contract.issueCredential(holderAddr, credHash);
+const tx = await contract.issueCredential(holderAddr, credHash, "ipfs://CID");
 await tx.wait();
 
-// v6: getAddress not utils.getAddress
-const addr = ethers.getAddress(rawAddr);
+// v6: BrowserProvider (frontend)
+const provider = new ethers.BrowserProvider(window.ethereum);
+const signer = await provider.getSigner();
 
-// v6: provider from hardhat
-const [owner, issuer, holder] = await ethers.getSigners();
+// v6: solidityPackedKeccak256 for hash
+const hash = ethers.solidityPackedKeccak256(
+  ["address", "string", "string"],
+  [studentAddr, degreeType, gradDate]
+);
 
-// v6: parseUnits
-const amount = ethers.parseEther("1.0");
+// v6: isAddress
+ethers.isAddress(addr);
 
 // v6: Contract factory
 const Factory = await ethers.getContractFactory("CredentialContract");
@@ -146,52 +204,60 @@ await contract.waitForDeployment();
 const address = await contract.getAddress();  // not .address
 ```
 
-## Testing Checklist
+## Testing
 
-### RegistryContract
-- [ ] Owner can add issuer → `IssuerAdded` emitted
-- [ ] Owner can remove issuer → `IssuerRemoved` emitted
-- [ ] Non-owner cannot add/remove issuer → reverts
-- [ ] `isAuthorized` returns correct state after add/remove
+- `test/Registry.test.ts` — 17 unit tests
+- `test/Credential.test.ts` — 48 unit tests (includes metadataURI tests)
+- `test/Credential.integration.test.ts` — 13 integration tests
 
-### CredentialContract
-- [ ] Authorized issuer can issue credential → `CredentialIssued` emitted
-- [ ] Unauthorized address cannot issue → reverts
-- [ ] Issuer can revoke own credential → `CredentialRevoked` emitted
-- [ ] Non-issuer cannot revoke → reverts
-- [ ] Holder can grant verifier access → `VerifierAccessGranted` emitted
-- [ ] Holder can revoke verifier access → `VerifierAccessRevoked` emitted
-- [ ] Non-holder cannot grant/revoke access → reverts
-- [ ] `verifyCredential` returns true for valid credential + authorized verifier
-- [ ] `verifyCredential` returns false for revoked credential
-- [ ] `verifyCredential` returns false for verifier without access
-- [ ] `verifyCredential` is view-only (no state change)
+All tests: `npx hardhat test` → should show 78 passing.
 
-## Sepolia Config (hardhat.config.js)
+## Hardhat Config (hardhat.config.ts)
 
-```js
+```ts
 networks: {
   sepolia: {
     url: process.env.SEPOLIA_RPC_URL,
     accounts: [process.env.PRIVATE_KEY],
     chainId: 11155111,
+  },
+  localhost: {
+    url: "http://127.0.0.1:8545",
+    chainId: 31337,
   }
 },
 etherscan: {
-  apiKey: process.env.ETHERSCAN_API_KEY,
+  apiKey: ETHERSCAN_API_KEY,  // string, NOT { sepolia: KEY } — V2 API
 }
 ```
 
-## Deployment Order
+## Frontend (frontend/)
 
-1. Deploy `RegistryContract` → save address
-2. Deploy `CredentialContract(registryAddress)` → save address
-3. Call `addIssuer(issuerAddress)` on Registry
-4. Verify both contracts on Etherscan
+Stack: Vite 5 + TypeScript 5 + Ethers.js v6. MetaMask wallet.
 
-## Frontend Notes
+```bash
+cd frontend
+npm install
+npm run dev    # localhost:5173
+npm run build  # dist/
+```
 
-- Use `ethers.Contract` with ABI + provider (read) or signer (write)
-- `verifyCredential` → call, not send (view function)
-- Listen for events via `contract.on("CredentialIssued", handler)`
-- Compute `credentialHash = ethers.keccak256(ethers.toUtf8Bytes(rawData))` client-side
+Config: `frontend/src/config.ts` — addresses, ABIs (including all custom errors for decoding).
+
+Hash function: `solidityPackedKeccak256(["address","string","string"], [studentAddr, degreeType, gradDate])`
+
+IPFS: `frontend/src/utils/ipfs.ts` — uploads PDF to Pinata, returns CID.
+
+All UI functions exposed on `window.*` for inline `onclick` handlers.
+
+## Demo Flow
+
+**Sepolia:** issuer already registered (`0x9E492DfE631f4A5732771574848292f0b242eE53`). Use different credential inputs each session to avoid `CredentialAlreadyExists`.
+
+**Local (clean reset):**
+1. `npx hardhat node` (Terminal 1)
+2. `npx hardhat ignition deploy ignition/modules/DACS.ts --network localhost` (Terminal 2)
+3. Update `frontend/.env` with localhost addresses
+4. MetaMask → Add network: `http://127.0.0.1:8545`, chainId `31337`
+5. Import Hardhat Account #0 private key: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+6. Kill node → restart = full reset

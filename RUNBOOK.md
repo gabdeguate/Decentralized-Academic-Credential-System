@@ -127,10 +127,10 @@ Compilation finished successfully
 npm test
 ```
 
-Runs all 60 tests across three files:
+Runs all 78 tests across three files:
 - `test/Registry.test.ts` — 17 unit tests
-- `test/Credential.test.ts` — 32 unit tests
-- `test/Credential.integration.test.ts` — 11 integration tests (full lifecycle)
+- `test/Credential.test.ts` — 48 unit tests (includes metadataURI / getMetadataURI)
+- `test/Credential.integration.test.ts` — 13 integration tests (full lifecycle)
 
 ### Run a single test file
 
@@ -208,7 +208,7 @@ This starts a Hardhat in-process Ethereum node at `http://127.0.0.1:8545`. It pr
 **Terminal 2 — deploy:**
 
 ```bash
-npm run deploy:local
+npx hardhat ignition deploy ignition/modules/DACS.ts --network localhost
 ```
 
 Output will show both deployed contract addresses. The deployment is **not** persisted between node restarts — restarting `npm run node` wipes all state.
@@ -302,64 +302,85 @@ etherscan: {
 
 ## Start the Frontend
 
-The frontend directory (`frontend/`) is currently a placeholder. When implemented:
+The frontend is a Vite + TypeScript app in `frontend/`.
 
+**Setup:**
 ```bash
 cd frontend
+cp .env.example .env
+# Fill in VITE_PINATA_API_KEY, VITE_PINATA_SECRET_API_KEY
+# VITE_REGISTRY_ADDRESS and VITE_CREDENTIAL_ADDRESS already have Sepolia defaults
 npm install
-npm run dev       # or: npm start
+npm run dev    # opens localhost:5173
 ```
 
-**Frontend stack (planned):** Ethers.js v6 + MetaMask.
-
-**Contract address configuration:** The frontend will read deployed addresses from environment variables or a config file. After deploying to Sepolia, update the frontend config with:
-
+**After deploying new contracts**, update `frontend/.env`:
 ```
-REGISTRY_ADDRESS=0x3193c25d8A69758B8836c47f6105d4cD6d46563e
-CREDENTIAL_ADDRESS=0x403493392013806b3dC5Bea7C031e02E641ad336
+VITE_REGISTRY_ADDRESS=0x<new registry address>
+VITE_CREDENTIAL_ADDRESS=0x<new credential address>
+```
+Then restart the dev server (`Ctrl+C` → `npm run dev`).
+
+**Build for production:**
+```bash
+npm run build   # outputs to frontend/dist/
 ```
 
 **Connecting to MetaMask (Ethers.js v6):**
-
 ```ts
 // v6: BrowserProvider, not Web3Provider
 const provider = new ethers.BrowserProvider(window.ethereum);
 
-// Always check chainId — prompt user to switch to Sepolia if wrong
+// Always check chainId
 const network = await provider.getNetwork();
 if (network.chainId !== 11155111n) {
   await window.ethereum.request({
     method: 'wallet_switchEthereumChain',
-    params: [{ chainId: '0xaa36a7' }],  // 11155111 in hex
+    params: [{ chainId: '0xaa36a7' }],
   });
 }
-
 const signer = await provider.getSigner();
 ```
 
 **Hashing credential data client-side:**
-
 ```ts
-// Raw data never leaves the browser — only the hash goes on-chain
-const raw = `student:${name}|degree:${degree}|year:${year}`;
-const credentialHash = ethers.keccak256(ethers.toUtf8Bytes(raw));
+// Must use solidityPackedKeccak256 to match on-chain encoding
+const credentialHash = ethers.solidityPackedKeccak256(
+  ["address", "string", "string"],
+  [studentAddress, degreeType, graduationDate]
+);
 ```
 
 **Role-specific flows:**
-
 ```ts
-// Issuer: issue a credential
-const tx = await credentialContract.connect(signer).issueCredential(holderAddress, credentialHash);
+// Issuer: upload PDF to Pinata first, then issue
+const cid = await uploadToPinata(pdfFile);   // returns IPFS CID
+const tx = await credentialContract.issueCredential(holderAddress, credentialHash, `ipfs://${cid}`);
 await tx.wait();
 
 // Holder: grant verifier access
-const tx = await credentialContract.connect(signer).grantVerifierAccess(credentialHash, verifierAddress);
+const tx = await credentialContract.grantVerifierAccess(credentialHash, verifierAddress);
 await tx.wait();
 
-// Verifier: verify a credential (view call — no gas, no MetaMask popup)
-const [valid, reason] = await credentialContract.connect(signer).verifyCredential(credentialHash);
+// Verifier: verify (view call — msg.sender IS the verifier)
+const [valid, reason] = await credentialContract.verifyCredential(credentialHash);
 console.log(valid ? "✅ Valid" : `❌ Invalid: ${reason}`);
+
+// Holder / anyone: get IPFS URI for diploma download
+const uri = await credentialContract.getMetadataURI(credentialHash);
+// uri = "ipfs://Qm..."
 ```
+
+**Switch MetaMask account (for demo):**
+
+The UI has a "Switch Account" button that calls:
+```ts
+await window.ethereum.request({
+  method: "wallet_requestPermissions",
+  params: [{ eth_accounts: {} }],
+});
+```
+This forces MetaMask to show its account selector. Page reloads after account switch via `accountsChanged` listener.
 
 ---
 
@@ -369,8 +390,8 @@ console.log(valid ? "✅ Valid" : `❌ Invalid: ${reason}`);
 
 Both contracts are verified. Navigate to their Sepolia Etherscan pages and use "Write Contract" (connect MetaMask) or "Read Contract" (no wallet needed).
 
-- RegistryContract: https://sepolia.etherscan.io/address/0x3193c25d8A69758B8836c47f6105d4cD6d46563e
-- CredentialContract: https://sepolia.etherscan.io/address/0x403493392013806b3dC5Bea7C031e02E641ad336
+- RegistryContract: https://sepolia.etherscan.io/address/0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D
+- CredentialContract: https://sepolia.etherscan.io/address/0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c
 
 ### Via Hardhat Console
 
@@ -381,7 +402,7 @@ Both contracts are verified. Navigate to their Sepolia Etherscan pages and use "
 ```ts
 // In the Hardhat console (TypeScript):
 const Registry = await ethers.getContractFactory("RegistryContract");
-const registry = Registry.attach("0x3193c25d8A69758B8836c47f6105d4cD6d46563e");
+const registry = Registry.attach("0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D");
 
 const [signer] = await ethers.getSigners();
 console.log("Owner:", await registry.owner());
@@ -400,11 +421,11 @@ async function main() {
 
   const registry = await ethers.getContractAt(
     "RegistryContract",
-    "0x3193c25d8A69758B8836c47f6105d4cD6d46563e"
+    "0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D"
   );
   const credential = await ethers.getContractAt(
     "CredentialContract",
-    "0x403493392013806b3dC5Bea7C031e02E641ad336"
+    "0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c"
   );
 
   // Register an issuer
@@ -415,9 +436,11 @@ async function main() {
 
   // Issue a credential
   const holderAddress = "0xYourHolderAddress";
-  const raw = "student:alice|degree:CS|year:2024";
-  const hash = ethers.keccak256(ethers.toUtf8Bytes(raw));
-  const issueTx = await credential.connect(owner).issueCredential(holderAddress, hash);
+  const hash = ethers.solidityPackedKeccak256(
+    ["address", "string", "string"],
+    [holderAddress, "Bachelor of Science", "2024-06-15"]
+  );
+  const issueTx = await credential.connect(owner).issueCredential(holderAddress, hash, "ipfs://QmYourCID");
   await issueTx.wait();
   console.log("Credential issued. Hash:", hash);
 }

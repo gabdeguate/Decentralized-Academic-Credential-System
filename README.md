@@ -5,8 +5,8 @@ DACS is a two-contract Ethereum system for issuing, revoking, and verifying acad
 Deployed on **Ethereum Sepolia**:
 | Contract | Address |
 |---|---|
-| `RegistryContract` | [`0x3193c25d8A69758B8836c47f6105d4cD6d46563e`](https://sepolia.etherscan.io/address/0x3193c25d8A69758B8836c47f6105d4cD6d46563e) |
-| `CredentialContract` | [`0x403493392013806b3dC5Bea7C031e02E641ad336`](https://sepolia.etherscan.io/address/0x403493392013806b3dC5Bea7C031e02E641ad336) |
+| `RegistryContract` | [`0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D`](https://sepolia.etherscan.io/address/0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D) |
+| `CredentialContract` | [`0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c`](https://sepolia.etherscan.io/address/0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c) |
 
 ---
 
@@ -156,6 +156,7 @@ struct Credential {
     address holder;
     bool revoked;
     uint256 issuedAt;        // 0 = does not exist (used as existence check)
+    string metadataURI;      // "ipfs://CID" pointing to off-chain diploma PDF
 }
 
 mapping(bytes32 => Credential) private credentials;
@@ -166,11 +167,12 @@ mapping(bytes32 => mapping(address => bool)) private verifierAccess;
 
 | Function | Access | Description |
 |---|---|---|
-| `issueCredential(address holder, bytes32 credentialHash)` | Registered issuer | Creates credential record. Emits `CredentialIssued`. |
+| `issueCredential(address holder, bytes32 credentialHash, string calldata metadataURI)` | Registered issuer | Creates credential record, stores IPFS URI. Emits `CredentialIssued`. |
 | `revokeCredential(bytes32 credentialHash)` | Original issuer of that credential | Sets `revoked = true`. Emits `CredentialRevoked`. Permanent — no un-revoke. |
 | `grantVerifierAccess(bytes32 credentialHash, address verifier)` | Credential holder | Adds `verifier` to allowlist. Emits `VerifierAccessGranted`. |
 | `revokeVerifierAccess(bytes32 credentialHash, address verifier)` | Credential holder | Removes `verifier` from allowlist. Emits `VerifierAccessRevoked`. |
 | `verifyCredential(bytes32 credentialHash)` | `view` — `msg.sender` is the verifier | Returns `(bool valid, string memory reason)`. Zero gas for callers. |
+| `getMetadataURI(bytes32 credentialHash)` | `view` | Returns stored `metadataURI`. Reverts `CredentialNotFound` if not exists. |
 
 #### `verifyCredential` — Condition Order
 
@@ -188,7 +190,7 @@ Ordering matters: revoking an institution (condition 2) takes precedence over cr
 
 | Event | Emitted when |
 |---|---|
-| `CredentialIssued(bytes32 indexed hash, address indexed issuer, address indexed holder)` | Credential issued |
+| `CredentialIssued(bytes32 indexed hash, address indexed issuer, address indexed holder, string metadataURI)` | Credential issued |
 | `CredentialRevoked(bytes32 indexed hash, address indexed issuer)` | Credential revoked |
 | `VerifierAccessGranted(bytes32 indexed hash, address indexed holder, address indexed verifier)` | Holder grants verifier |
 | `VerifierAccessRevoked(bytes32 indexed hash, address indexed holder, address indexed verifier)` | Holder revokes verifier |
@@ -213,9 +215,10 @@ Ordering matters: revoking an institution (condition 2) takes precedence over cr
 1.  Owner  →  RegistryContract.registerIssuer(issuerAddr)
                    emits IssuerAdded
 
-2.  Issuer →  CredentialContract.issueCredential(holderAddr, keccak256Hash)
+2.  Issuer →  CredentialContract.issueCredential(holderAddr, keccak256Hash, "ipfs://CID")
                    checks registry.isRegisteredIssuer(msg.sender)
-                   emits CredentialIssued
+                   stores metadataURI on-chain
+                   emits CredentialIssued(hash, issuer, holder, metadataURI)
 
 3.  Holder →  CredentialContract.grantVerifierAccess(hash, verifierAddr)
                    emits VerifierAccessGranted
@@ -276,29 +279,31 @@ dacs/
 │                              contracts using the journal.
 │
 ├── ignition/deployments/
-│   └── chain-11155111/
-│       ├── deployed_addresses.json   Final deployed addresses (Sepolia).
-│       └── journal.jsonl             Ignition execution log. Never delete
-│                                     this — it enables idempotent re-runs.
+│   ├── chain-11155111/
+│   │   ├── deployed_addresses.json   Sepolia deployed addresses.
+│   │   └── journal.jsonl             Ignition execution log (idempotency).
+│   └── chain-31337/
+│       └── deployed_addresses.json   Localhost deployed addresses.
 │
 ├── test/
 │   ├── Registry.test.ts        17 unit tests for RegistryContract.
 │   │                           Covers: deployment, registerIssuer (5 cases),
 │   │                           revokeIssuer (5 cases), isRegisteredIssuer (4 cases).
 │   │
-│   ├── Credential.test.ts      32 unit tests for CredentialContract.
+│   ├── Credential.test.ts      48 unit tests for CredentialContract.
 │   │                           Covers: deployment, issueCredential (7 cases),
 │   │                           revokeCredential (5 cases), grantVerifierAccess
 │   │                           (6 cases), revokeVerifierAccess (6 cases),
-│   │                           verifyCredential (7 cases).
+│   │                           verifyCredential (7 cases), metadataURI (3 cases),
+│   │                           getMetadataURI (3 cases).
 │   │
 │   └── Credential.integration.test.ts
-│                               11 integration tests — full lifecycle.
+│                               13 integration tests — full lifecycle.
 │                               Uses shared state (before not beforeEach) so
 │                               tests run sequentially as a story:
-│                               register → issue → grant → verify(true) →
-│                               revoke → verify(false) → deregister issuer →
-│                               verify(false, "Issuer no longer registered").
+│                               register → issue (with metadataURI) → getMetadataURI →
+│                               grant → verify(true) → revoke → verify(false) →
+│                               deregister issuer → verify(false, "Issuer no longer registered").
 │
 ├── typechain-types/            Auto-generated TypeScript bindings for all
 │                               contracts (from hardhat compile). Excluded
