@@ -229,7 +229,29 @@ showing its short address.
 
 ---
 
-## 10. How a diploma's whole life looks (end-to-end)
+## 10. Anyone can verify a diploma — no login needed (public lookup)
+
+Employers and registrars often just want to **check** a diploma, not log in. The home
+page has a **"Verify a Credential"** box: paste a student's wallet address, hit
+**Search**, and you land on a full results page that looks just like the student
+dashboard — **no wallet, no login**.
+
+That page shows every credential issued to that wallet, **grouped by the university**
+that issued it (by readable name), and for each one:
+
+- the **degree** (e.g. "Bachelor of Computer Science"), pulled from the diploma's
+  stored details,
+- a **View PDF** link to the actual diploma on IPFS,
+- a **View on Etherscan** link to the exact blockchain transaction that issued it — so
+  anyone can independently confirm it happened and was never tampered with,
+- and its status badge: ✓ Active, ✗ Revoked, or ⚠ issuer no longer registered.
+
+> **In one line:** paste an address, instantly see real degrees, real diplomas, and the
+> on-chain proof behind each — without an account.
+
+---
+
+## 11. How a diploma's whole life looks (end-to-end)
 
 Putting it all together, here is the journey of a single diploma:
 
@@ -248,7 +270,7 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 
 ---
 
-## 11. Quality and safety practices
+## 12. Quality and safety practices
 
 - **Automated tests:** the contracts ship with ~80+ automated tests covering every
   rule — who can do what, what happens on bad input, and a full

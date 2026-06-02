@@ -54,6 +54,7 @@ declare global {
     logout:             () => void;
     submitCreateAccount:(btn: HTMLButtonElement) => Promise<void>;
     publicLookup:       (btn: HTMLButtonElement) => Promise<void>;
+    publicBackToSearch: () => void;
     refreshMajors:      (prefix: string) => void;
     studentDownload:    (credHash: string, btn: HTMLButtonElement) => Promise<void>;
     studentGrantAccess: (credHash: string, btn: HTMLButtonElement) => Promise<void>;
@@ -81,6 +82,7 @@ declare global {
 type UserRole = "none" | "admin" | "issuer" | "student" | "verifier";
 const VIEW_IDS = [
   "viewConnect",
+  "viewPublicResult",
   "viewMultiRoleError",
   "viewCreateAccount",
   "viewAdmin",
@@ -100,6 +102,11 @@ function showView(viewId: ViewId): void {
     const el = document.getElementById(id);
     if (el) el.style.display = id === viewId ? "block" : "none";
   }
+}
+
+// Public lookup result page → back to the search/connect landing.
+function publicBackToSearch(): void {
+  showView("viewConnect");
 }
 
 function setRoleBadge(role: UserRole, addr: string): void {
@@ -1150,10 +1157,12 @@ async function resolveSchoolName(issuerAddr: string): Promise<string> {
   if (cached !== undefined) return cached;
 
   let name = shortAddr(issuerAddr); // fallback
-  if (registry) {
+  // Use the wallet-bound registry when logged in, else the read-only one (public path).
+  const reg: Contract | null = registry ?? (readRegistry ?? null);
+  if (reg) {
     try {
-      const logs = await (registry as Contract).queryFilter(
-        (registry as Contract).filters.IssuerRequested(issuerAddr), 0, "latest");
+      const logs = await reg.queryFilter(
+        reg.filters.IssuerRequested(issuerAddr), 0, "latest");
       const last = logs[logs.length - 1] as EventLog | undefined;
       const uri = last?.args?.metadataURI as string | undefined;
       if (uri) {
@@ -2175,6 +2184,7 @@ interface PublicCredEntry {
   blockNumber: number;
   status:      "VALID" | "REVOKED" | "ISSUER INVALID";
   issuedDate:  string;
+  txHash:      string;
 }
 
 /**
@@ -2201,12 +2211,6 @@ async function queryFilterSafe(
 
 async function publicLookup(btn: HTMLButtonElement): Promise<void> {
   const addr = getVal("publicLookupAddr");
-  const listEl      = document.getElementById("publicCredentialList")!;
-  const dashboardEl = document.getElementById("publicDashboard")!;
-
-  // Reset UI
-  listEl.innerHTML = "";
-  dashboardEl.className = "verify-dashboard";
 
   if (!addr) {
     setResult("publicLookupResult", "error", "Enter a wallet address.");
@@ -2272,39 +2276,18 @@ async function publicLookup(btn: HTMLButtonElement): Promise<void> {
 
         const issuedDate = block ? formatTs(Number(block.timestamp)) : "Unknown";
 
-        return { credHash, issuer: issuerAddr, holder: holderAddr, metadataURI, blockNumber: ev.blockNumber, status, issuedDate };
+        return {
+          credHash, issuer: issuerAddr, holder: holderAddr, metadataURI,
+          blockNumber: ev.blockNumber, status, issuedDate, txHash: ev.transactionHash,
+        };
       })
     );
 
-    // Render cards
+    // Navigate to the full result page (student-dashboard style).
     setResult("publicLookupResult", "success", `${issuedLogs.length} credential(s) found.`);
-
-    for (const entry of entries) {
-      const card = document.createElement("div");
-      card.className = `cred-card${entry.status === "REVOKED" ? " revoked" : ""}`;
-
-      const shortHash   = `${entry.credHash.slice(0, 10)}…${entry.credHash.slice(-6)}`;
-      const shortIssuer = `${entry.issuer.slice(0, 6)}…${entry.issuer.slice(-4)}`;
-
-      const badgeClass = entry.status === "VALID" ? "valid" : entry.status === "REVOKED" ? "revoked" : "invalid";
-
-      card.innerHTML =
-        `<div class="cred-card-info">` +
-          `<span class="cred-card-hash">${shortHash}</span>` +
-          `<span class="cred-card-meta">Issuer: ${shortIssuer} · ${entry.issuedDate}</span>` +
-        `</div>` +
-        `<span class="cred-card-badge ${badgeClass}">${entry.status}</span>`;
-
-      card.addEventListener("click", () => showPublicDashboard(entry));
-      listEl.appendChild(card);
-    }
-
-    if (truncated) {
-      const msg = document.createElement("p");
-      msg.className = "public-truncate-msg";
-      msg.textContent = `Showing most recent ${MAX_DISPLAY} of ${issuedLogs.length} credentials.`;
-      listEl.appendChild(msg);
-    }
+    setText("publicResultTitle", `Credentials for ${shortAddr(addr)}`);
+    await renderPublicResult(entries, truncated, issuedLogs.length);
+    showView("viewPublicResult");
 
   } catch (e) {
     setResult("publicLookupResult", "error", `RPC error: ${errMsg(e)}`);
@@ -2313,68 +2296,122 @@ async function publicLookup(btn: HTMLButtonElement): Promise<void> {
   }
 }
 
-function showPublicDashboard(entry: PublicCredEntry): void {
-  const dashboard = document.getElementById("publicDashboard")!;
+// Render the public result page: rich credential cards grouped by issuing
+// university — degree, diploma link, and an on-chain event link. Read-only
+// (no wallet); mirrors renderStudentDashboard's layout and helpers.
+async function renderPublicResult(
+  entries: PublicCredEntry[],
+  truncated: boolean,
+  total: number,
+): Promise<void> {
+  const container = document.getElementById("publicResultList");
+  if (!container) return;
 
-  // Status header
-  const statusEl = document.getElementById("pubDashStatus")!;
-  if (entry.status === "VALID") {
-    dashboard.className = "verify-dashboard show verified";
-    statusEl.className  = "dash-status verified";
-    setText("pubDashIcon",   "✅");
-    setText("pubDashLabel",  "CREDENTIAL VALID");
-    setText("pubDashReason", "");
-  } else if (entry.status === "REVOKED") {
-    dashboard.className = "verify-dashboard show invalid";
-    statusEl.className  = "dash-status invalid";
-    setText("pubDashIcon",   "❌");
-    setText("pubDashLabel",  "CREDENTIAL REVOKED");
-    setText("pubDashReason", "This credential has been revoked by the issuer.");
-  } else {
-    dashboard.className = "verify-dashboard show errored";
-    statusEl.className  = "dash-status errored";
-    setText("pubDashIcon",   "⚠️");
-    setText("pubDashLabel",  "ISSUER INVALID");
-    setText("pubDashReason", "The issuing institution is no longer registered.");
+  container.innerHTML = `<div class="dash-loading" style="padding:24px 0;">Loading credential details…</div>`;
+
+  // Degree metadata per credential (parallel; graceful fallback to event URI).
+  const metas: CredMeta[] = await Promise.all(entries.map(async (e) => {
+    try {
+      const uri: string = await readCredential.getMetadataURI(e.credHash);
+      return await fetchCredentialMetadata(uri);
+    } catch (err) {
+      console.warn(`Public metadata fetch for ${e.credHash.slice(0, 10)}… failed:`, errMsg(err));
+      if (e.metadataURI) {
+        return await fetchCredentialMetadata(e.metadataURI)
+          .catch(() => ({ kind: "error", message: errMsg(err) } as CredMeta));
+      }
+      return { kind: "error", message: errMsg(err) } as CredMeta;
+    }
+  }));
+
+  // Recover legacy titles from the original Pinata pin filename where possible.
+  const pinNames: (string | null)[] = await Promise.all(metas.map(async (m) =>
+    m.kind === "pdf-legacy" ? await fetchPinName(m.pdfCid) : null));
+
+  // Group credentials by issuing school, preserving order.
+  const groups = new Map<string, number[]>(); // issuerLower -> indices into entries
+  entries.forEach((e, i) => {
+    const key = e.issuer.toLowerCase();
+    const arr = groups.get(key);
+    if (arr) arr.push(i);
+    else groups.set(key, [i]);
+  });
+
+  // Resolve a display name per unique issuer (cached, parallel).
+  const keys  = [...groups.keys()];
+  const names = await Promise.all(keys.map((k) => resolveSchoolName(entries[groups.get(k)![0]].issuer)));
+
+  container.innerHTML = "";
+  keys.forEach((key, gi) => {
+    const indices    = groups.get(key)!;
+    const issuerAddr = entries[indices[0]].issuer;
+
+    const group = document.createElement("div");
+    group.className = "cred-school-group";
+
+    const head = document.createElement("h3");
+    head.className = "cred-school-head";
+    head.innerHTML =
+      `🏛 ${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
+    group.appendChild(head);
+
+    for (const i of indices) group.appendChild(buildPublicCard(entries[i], metas[i], pinNames[i]));
+    container.appendChild(group);
+  });
+
+  if (truncated) {
+    const msg = document.createElement("p");
+    msg.className = "public-truncate-msg";
+    msg.textContent = `Showing most recent ${entries.length} of ${total} credentials.`;
+    container.appendChild(msg);
   }
+}
 
-  setText("pubDashCredId", entry.credHash);
-  setText("pubDashHolder", entry.holder);
-  setText("pubDashIssuer", entry.issuer);
-  setText("pubDashIssued", entry.issuedDate);
+// One read-only credential card for the public result page.
+function buildPublicCard(entry: PublicCredEntry, meta: CredMeta, pinName: string | null): HTMLElement {
+  const { title, subtitle } = cardTitleFromMeta(meta, entry.credHash, { pinName });
 
-  // Issuer registration badge
-  const regEl = document.getElementById("pubDashIssuerReg")!;
-  if (entry.status === "ISSUER INVALID") {
-    regEl.textContent = "✗ Issuer not registered";
-    regEl.className   = "dash-badge warn";
-  } else {
-    regEl.textContent = "✓ Issuer registered";
-    regEl.className   = "dash-badge ok";
-  }
+  let badge: string;
+  if (entry.status === "REVOKED")             badge = `<span class="dash-badge warn">✗ Revoked</span>`;
+  else if (entry.status === "ISSUER INVALID") badge = `<span class="dash-badge warn">⚠ Issuer not registered</span>`;
+  else                                        badge = `<span class="dash-badge ok">✓ Active</span>`;
 
-  // Revocation row
-  if (entry.status === "REVOKED") {
-    setHtml("pubDashRevoked", `<span class="text-warn">Revoked</span>`);
-  } else {
-    setHtml("pubDashRevoked", `<span class="text-ok">Not revoked</span>`);
-  }
+  // Diploma PDF — prefer the sidecar/legacy pdfCid, else the raw metadata URI.
+  let diplomaCid = "";
+  if (meta.kind === "json" || meta.kind === "pdf-legacy")   diplomaCid = meta.pdfCid;
+  else if (entry.metadataURI.startsWith("ipfs://"))         diplomaCid = entry.metadataURI.replace("ipfs://", "");
 
-  // IPFS diploma link
-  const diplomaRow = document.getElementById("pubDashDiplomaRow")!;
-  if (entry.metadataURI && entry.metadataURI.startsWith("ipfs://")) {
-    const cid  = entry.metadataURI.replace("ipfs://", "");
-    const url  = `${PINATA_GATEWAY}${cid}`;
-    const link = document.getElementById("pubDashDiplomaLink") as HTMLAnchorElement;
-    link.href        = url;
-    link.textContent = `${cid.slice(0, 18)}… ↗ View PDF`;
-    diplomaRow.style.display = "flex";
-  } else {
-    diplomaRow.style.display = "none";
-  }
+  const gradRow = meta.kind === "json" && meta.gradDate
+    ? `<span class="k">Graduated</span><span class="v">${escapeHtml(meta.gradDate)}</span>`
+    : "";
+  const diplomaRow = diplomaCid
+    ? `<span class="k">Diploma</span><span class="v"><a href="${PINATA_GATEWAY}${escapeHtml(diplomaCid)}" target="_blank" rel="noopener">↗ View PDF</a></span>`
+    : "";
+  const txRow = entry.txHash
+    ? `<span class="k">Event</span><span class="v"><a href="${ETHERSCAN_TX}${escapeHtml(entry.txHash)}" target="_blank" rel="noopener">↗ View on Etherscan</a></span>`
+    : "";
 
-  // Scroll into view
-  dashboard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const card = document.createElement("div");
+  card.className = `cred-card${entry.status === "REVOKED" ? " revoked" : ""}`;
+  card.dataset.hash = entry.credHash;
+  card.innerHTML = `
+    <div class="cred-title">
+      <div>
+        <h4>${escapeHtml(title)}</h4>
+        <div class="cred-subtitle">${escapeHtml(subtitle)}</div>
+      </div>
+      <div>${badge}</div>
+    </div>
+    <div class="cred-meta">
+      <span class="k">Issued</span><span class="v">${escapeHtml(entry.issuedDate)}</span>
+      ${gradRow}
+      <span class="k">Issuer</span><span class="v cred-hash">${escapeHtml(entry.issuer)}</span>
+      <span class="k">Hash</span><span class="v cred-hash">${escapeHtml(entry.credHash)}</span>
+      ${diplomaRow}
+      ${txRow}
+    </div>
+  `;
+  return card;
 }
 
 // ─── Expose to window (inline onclick in index.html) ──────────────────────────
@@ -2391,6 +2428,7 @@ window.doVerify           = doVerify;
 window.logout              = logout;
 window.submitCreateAccount = submitCreateAccount;
 window.publicLookup        = publicLookup;
+window.publicBackToSearch  = publicBackToSearch;
 window.refreshMajors       = refreshMajors;
 window.studentDownload     = studentDownload;
 window.studentGrantAccess  = studentGrantAccess;
