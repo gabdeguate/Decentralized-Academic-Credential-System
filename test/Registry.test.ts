@@ -149,4 +149,157 @@ describe("RegistryContract", function () {
       expect(await registry.isRegisteredIssuer(issuer.address)).to.be.true;
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Student flow (mirrors the issuer flow)
+  // ---------------------------------------------------------------------------
+
+  describe("requestStudent", function () {
+    it("applicant can apply and status becomes Pending", async function () {
+      await registry.connect(stranger).requestStudent("ipfs://app");
+      expect(await registry.studentRequestStatus(stranger.address)).to.equal(1); // Pending
+    });
+
+    it("emits StudentRequested with the metadata URI", async function () {
+      await expect(registry.connect(stranger).requestStudent("ipfs://app"))
+        .to.emit(registry, "StudentRequested")
+        .withArgs(stranger.address, "ipfs://app");
+    });
+
+    it("reverts with RequestPending on double-apply", async function () {
+      await registry.connect(stranger).requestStudent("ipfs://app");
+      await expect(
+        registry.connect(stranger).requestStudent("ipfs://app2")
+      ).to.be.revertedWithCustomError(registry, "RequestPending");
+    });
+
+    it("reverts with AlreadyRegistered if already a student", async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+      await expect(
+        registry.connect(stranger).requestStudent("ipfs://app")
+      ).to.be.revertedWithCustomError(registry, "AlreadyRegistered")
+        .withArgs(stranger.address);
+    });
+  });
+
+  describe("rejectStudentRequest", function () {
+    beforeEach(async function () {
+      await registry.connect(stranger).requestStudent("ipfs://app");
+    });
+
+    it("owner can reject a pending request", async function () {
+      await registry.connect(owner).rejectStudentRequest(stranger.address, "no proof");
+      expect(await registry.studentRequestStatus(stranger.address)).to.equal(2); // Rejected
+    });
+
+    it("emits StudentRequestRejected with the reason", async function () {
+      await expect(registry.connect(owner).rejectStudentRequest(stranger.address, "no proof"))
+        .to.emit(registry, "StudentRequestRejected")
+        .withArgs(stranger.address, "no proof");
+    });
+
+    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+      await expect(
+        registry.connect(issuer).rejectStudentRequest(stranger.address, "x")
+      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
+        .withArgs(issuer.address);
+    });
+
+    it("reverts with NoPendingRequest when nothing is pending", async function () {
+      await expect(
+        registry.connect(owner).rejectStudentRequest(issuer.address, "x")
+      ).to.be.revertedWithCustomError(registry, "NoPendingRequest");
+    });
+  });
+
+  describe("registerStudent", function () {
+    it("owner can register a student", async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+      expect(await registry.isRegisteredStudent(stranger.address)).to.be.true;
+    });
+
+    it("emits StudentAdded on registration", async function () {
+      await expect(registry.connect(owner).registerStudent(stranger.address))
+        .to.emit(registry, "StudentAdded")
+        .withArgs(stranger.address);
+    });
+
+    it("clears a pending application on approval", async function () {
+      await registry.connect(stranger).requestStudent("ipfs://app");
+      await registry.connect(owner).registerStudent(stranger.address);
+      expect(await registry.studentRequestStatus(stranger.address)).to.equal(0); // None
+    });
+
+    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+      await expect(
+        registry.connect(stranger).registerStudent(stranger.address)
+      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
+        .withArgs(stranger.address);
+    });
+
+    it("reverts on zero address", async function () {
+      await expect(
+        registry.connect(owner).registerStudent(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "ZeroAddress");
+    });
+
+    it("reverts if student already registered", async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+      await expect(
+        registry.connect(owner).registerStudent(stranger.address)
+      ).to.be.revertedWithCustomError(registry, "AlreadyRegistered")
+        .withArgs(stranger.address);
+    });
+  });
+
+  describe("revokeStudent", function () {
+    beforeEach(async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+    });
+
+    it("owner can revoke a registered student", async function () {
+      await registry.connect(owner).revokeStudent(stranger.address);
+      expect(await registry.isRegisteredStudent(stranger.address)).to.be.false;
+    });
+
+    it("emits StudentRemoved on revocation", async function () {
+      await expect(registry.connect(owner).revokeStudent(stranger.address))
+        .to.emit(registry, "StudentRemoved")
+        .withArgs(stranger.address);
+    });
+
+    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+      await expect(
+        registry.connect(issuer).revokeStudent(stranger.address)
+      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
+        .withArgs(issuer.address);
+    });
+
+    it("reverts if student not registered", async function () {
+      await expect(
+        registry.connect(owner).revokeStudent(issuer.address)
+      ).to.be.revertedWithCustomError(registry, "NotRegistered")
+        .withArgs(issuer.address);
+    });
+  });
+
+  describe("isRegisteredStudent", function () {
+    it("returns false for unknown address", async function () {
+      expect(await registry.isRegisteredStudent(stranger.address)).to.be.false;
+    });
+
+    it("re-registration works after revocation", async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+      await registry.connect(owner).revokeStudent(stranger.address);
+      await registry.connect(owner).registerStudent(stranger.address);
+      expect(await registry.isRegisteredStudent(stranger.address)).to.be.true;
+    });
+
+    it("issuer and student registries are independent", async function () {
+      await registry.connect(owner).registerStudent(stranger.address);
+      expect(await registry.isRegisteredIssuer(stranger.address)).to.be.false;
+      await registry.connect(owner).registerIssuer(issuer.address);
+      expect(await registry.isRegisteredStudent(issuer.address)).to.be.false;
+    });
+  });
 });

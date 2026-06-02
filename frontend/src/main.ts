@@ -14,9 +14,22 @@ import {
   PINATA_GATEWAY,
   REGISTRY_ABI,
   CREDENTIAL_ABI,
+  ADMIN_ADDRESSES,
 } from "./config.js";
-import { uploadToPinata } from "./utils/ipfs.js";
-import { MOCK_SCHOOLS, MAJORS_BY_DEPT, DEPARTMENTS, DEGREE_LEVELS } from "./data/mockStudents.js";
+import { uploadToPinata, uploadJsonToPinata, fetchPinName } from "./utils/ipfs.js";
+import {
+  type ReissueReq,
+  addReissueRequest,
+  findReissueByCredHash,
+  listPendingReissuesForIssuer,
+  updateReissueRequest,
+} from "./utils/reissueQueue.js";
+import {
+  MOCK_SCHOOLS,
+  MAJORS_BY_DEPT,
+  DEPARTMENTS,
+  DEGREE_LEVELS,
+} from "./data/mockStudents.js";
 
 // ─── Global ethereum type ─────────────────────────────────────────────────────
 declare global {
@@ -38,15 +51,33 @@ declare global {
     logout:             () => void;
     submitCreateAccount:(btn: HTMLButtonElement) => Promise<void>;
     refreshMajors:      (prefix: string) => void;
+    studentDownload:    (credHash: string, btn: HTMLButtonElement) => Promise<void>;
+    studentGrantAccess: (credHash: string, btn: HTMLButtonElement) => Promise<void>;
+    studentRevokeAccess:(credHash: string, btn: HTMLButtonElement) => Promise<void>;
+    toggleGrantForm:    (short: string) => void;
+    requestReissuance:  (credHash: string, issuerAddr: string) => void;
+    toggleLabelEdit:    (credHash: string) => void;
+    saveLocalLabel:     (credHash: string, btn: HTMLButtonElement) => void;
+    submitReissueRequest:(btn: HTMLButtonElement) => void;
+    closeReissueModal:  () => void;
+    approveReissue:     (reqId: string, btn: HTMLButtonElement) => Promise<void>;
+    rejectReissue:      (reqId: string, btn: HTMLButtonElement) => void;
+    toggleSignupRole:   () => void;
+    reapply:            () => void;
+    approveSchoolApp:   (addr: string, btn: HTMLButtonElement) => Promise<void>;
+    rejectSchoolApp:    (addr: string, btn: HTMLButtonElement) => Promise<void>;
+    approveStudentApp:  (addr: string, btn: HTMLButtonElement) => Promise<void>;
+    rejectStudentApp:   (addr: string, btn: HTMLButtonElement) => Promise<void>;
   }
 }
 
 // ─── View-state machine (Phase 1) ─────────────────────────────────────────────
-type UserRole = "none" | "issuer" | "student" | "verifier";
+type UserRole = "none" | "admin" | "issuer" | "student" | "verifier";
 const VIEW_IDS = [
   "viewConnect",
   "viewMultiRoleError",
   "viewCreateAccount",
+  "viewAdmin",
   "viewIssuer",
   "viewStudent",
   "viewVerifier",
@@ -55,6 +86,8 @@ type ViewId = typeof VIEW_IDS[number];
 
 let userRole:      UserRole = "none";
 let connectedAddr: string   = "";
+// Role whose application was last rejected — drives the "Re-apply" button.
+let lastRejectedRole: "student" | "school" = "student";
 
 function showView(viewId: ViewId): void {
   for (const id of VIEW_IDS) {
@@ -106,17 +139,37 @@ async function detectAndRoute(addr: string): Promise<void> {
   const grantedP  = (credential as Contract).queryFilter(
                       (credential as Contract).filters.VerifierAccessGranted(null, null, addr), 0, "latest")
                       .catch((e: unknown) => { console.warn("VerifierAccessGranted query:", errMsg(e)); return []; });
+  const reqStatP  = (registry   as Contract).issuerRequestStatus(addr)
+                      .catch((e: unknown) => { console.warn("issuerRequestStatus:", errMsg(e)); return 0; });
+  const isStudentP = (registry  as Contract).isRegisteredStudent(addr)
+                      .catch((e: unknown) => { console.warn("isRegisteredStudent:", errMsg(e)); return false; });
+  const studentReqStatP = (registry as Contract).studentRequestStatus(addr)
+                      .catch((e: unknown) => { console.warn("studentRequestStatus:", errMsg(e)); return 0; });
 
-  const [isIssuer, ownerAddr, issuedLogs, grantedLogs] = await Promise.all([
-    isIssuerP, ownerP, issuedP, grantedP,
-  ]);
+  const [isIssuer, ownerAddr, issuedLogs, grantedLogs, reqStatus, isStudent, studentReqStatus] =
+    await Promise.all([
+      isIssuerP, ownerP, issuedP, grantedP, reqStatP, isStudentP, studentReqStatP,
+    ]);
 
   const isOwner = typeof ownerAddr === "string" && ownerAddr.length > 0
                   && ownerAddr.toLowerCase() === addr.toLowerCase();
+  const isConfiguredAdmin = ADMIN_ADDRESSES.includes(addr.toLowerCase());
   const profile = localStorage.getItem(profileKey(addr));
 
-  const issuerMatch   = isOwner || isIssuer === true;
-  const studentMatch  = (issuedLogs as unknown[]).length > 0 || profile !== null;
+  // Admin = on-chain owner OR a configured admin wallet. Takes precedence over
+  // every other role and gets its own dashboard. NOTE: on-chain onlyOwner actions
+  // (register/reject) still require the wallet to be the actual Registry owner.
+  if (isOwner || isConfiguredAdmin) {
+    userRole = "admin";
+    setRoleBadge("admin", addr);
+    showView("viewAdmin");
+    renderPendingSchoolApps(addr);
+    renderPendingStudentApps(addr);
+    return;
+  }
+
+  const issuerMatch   = isIssuer === true;
+  const studentMatch  = isStudent === true || (issuedLogs as unknown[]).length > 0 || profile !== null;
   const verifierMatch = (grantedLogs as unknown[]).length > 0;
 
   // Owner is allowed to also be issuer-registered (one role: issuer). Multi-role
@@ -136,7 +189,18 @@ async function detectAndRoute(addr: string): Promise<void> {
   if (matchedRoles.length === 0) {
     userRole = "none";
     setRoleBadge("none", "");
-    showView("viewCreateAccount");
+    const issuerStatus  = Number(reqStatus);        // 0=None 1=Pending 2=Rejected
+    const studentStatus = Number(studentReqStatus); // 0=None 1=Pending 2=Rejected
+    // Pending beats Rejected; show whichever role has an active application.
+    if (issuerStatus === 1 || studentStatus === 1) {
+      showCreateAccount("pending");
+    } else if (issuerStatus === 2 || studentStatus === 2) {
+      lastRejectedRole = studentStatus === 2 ? "student" : "school";
+      showCreateAccount("rejected");
+      loadRejectionReason(addr, lastRejectedRole);
+    } else {
+      showCreateAccount("form");
+    }
     return;
   }
 
@@ -145,19 +209,24 @@ async function detectAndRoute(addr: string): Promise<void> {
   setRoleBadge(role, addr);
 
   if (role === "issuer") {
-    const ownerSection = document.getElementById("ownerOnlySection");
-    if (ownerSection) ownerSection.style.display = isOwner ? "block" : "none";
     showView("viewIssuer");
+    renderPendingReissues(addr);
   } else if (role === "student") {
     showView("viewStudent");
+    renderStudentDashboard(addr).catch((e) => {
+      const el = document.getElementById("studentCreds");
+      if (el) el.innerHTML = `<div class="empty-state">Error: ${errMsg(e)}</div>`;
+    });
   } else {
     showView("viewVerifier");
   }
 }
 
 function populateSchoolSelect(): void {
-  const sel = document.getElementById("signupSchool") as HTMLSelectElement | null;
-  if (!sel || sel.options.length > 0) return;
+  // signupSchool is a free-text <input> by default. Only populate if a project
+  // swaps it back to a <select> and MOCK_SCHOOLS has preset names.
+  const sel = document.getElementById("signupSchool");
+  if (!(sel instanceof HTMLSelectElement) || sel.options.length > 0) return;
   for (const school of MOCK_SCHOOLS) {
     const opt = document.createElement("option");
     opt.value = school;
@@ -217,27 +286,124 @@ function refreshMajors(prefix: string): void {
 }
 
 function populateDegreeFields(): void {
-  for (const prefix of ["issue", "revoke", "verify"]) {
+  for (const prefix of ["issue", "revoke", "verify", "reissue"]) {
     fillSelect(`${prefix}Level`, DEGREE_LEVELS, "Select level…");
     fillSelect(`${prefix}Dept`,  DEPARTMENTS,   "Select department…");
     refreshMajors(prefix); // initialize datalist (empty until dept chosen)
   }
 }
 
+// Show viewCreateAccount with one of its three sub-panels visible.
+function showCreateAccount(mode: "form" | "pending" | "rejected"): void {
+  showView("viewCreateAccount");
+  const form = document.getElementById("signupFormWrap");
+  const pend = document.getElementById("signupPendingWrap");
+  const rej  = document.getElementById("signupRejectedWrap");
+  if (form) form.style.display = mode === "form"     ? "block" : "none";
+  if (pend) pend.style.display = mode === "pending"  ? "block" : "none";
+  if (rej)  rej.style.display  = mode === "rejected" ? "block" : "none";
+}
+
+// Toggle the Student/School sub-forms based on the selected role radio.
+function toggleSignupRole(): void {
+  const role = (document.querySelector('input[name="signupRole"]:checked') as HTMLInputElement | null)?.value ?? "student";
+  const studentForm = document.getElementById("signupStudentForm");
+  const schoolForm  = document.getElementById("signupSchoolForm");
+  if (studentForm) studentForm.style.display = role === "student" ? "block" : "none";
+  if (schoolForm)  schoolForm.style.display  = role === "school"  ? "block" : "none";
+}
+
+// From the "rejected" panel: jump back to the form with the rejected role preselected.
+function reapply(): void {
+  const radio = document.querySelector(
+    `input[name="signupRole"][value="${lastRejectedRole}"]`) as HTMLInputElement | null;
+  if (radio) radio.checked = true;
+  toggleSignupRole();
+  showCreateAccount("form");
+}
+
+// Pull the latest on-chain rejection reason for the given role and show it.
+async function loadRejectionReason(addr: string, role: "student" | "school"): Promise<void> {
+  if (!registry) return;
+  try {
+    const filter = role === "student"
+      ? (registry as Contract).filters.StudentRequestRejected(addr)
+      : (registry as Contract).filters.IssuerRequestRejected(addr);
+    const logs = await (registry as Contract).queryFilter(filter, 0, "latest");
+    const last = logs[logs.length - 1] as EventLog | undefined;
+    const reason = last?.args?.reason as string | undefined;
+    if (reason) setText("signupRejectedReason", `Reason: ${reason}`);
+  } catch (e) {
+    console.warn("loadRejectionReason:", errMsg(e));
+  }
+}
+
 async function submitCreateAccount(btn: HTMLButtonElement): Promise<void> {
+  const role = (document.querySelector('input[name="signupRole"]:checked') as HTMLInputElement | null)?.value ?? "student";
+  if (role === "school") {
+    await submitSchoolApplication(btn);
+    return;
+  }
   setLoading(btn, true);
   try {
     if (!connectedAddr) throw new Error("Wallet not connected.");
-    const name   = getVal("signupName");
-    const school = (document.getElementById("signupSchool") as HTMLSelectElement | null)?.value ?? "";
+    await ensureConnected();
+    const name    = getVal("signupName");
+    const school  = getVal("signupSchool");
+    const contact = getVal("signupContact");
     if (!name)   throw new Error("Enter your name.");
-    if (!school) throw new Error("Select a school.");
+    if (!school) throw new Error("Enter your school.");
 
+    // Local copy for display only — the admin gates access on-chain.
     localStorage.setItem(
       profileKey(connectedAddr),
       JSON.stringify({ name, school, createdAt: Date.now() }),
     );
-    setResult("signupResult", "success", `✅ Account created. Routing…`);
+
+    setResult("signupResult", "pending", "⬆ Pinning application metadata…");
+    const meta = { version: 1, name, school, contact, appliedAt: new Date().toISOString() };
+    const jsonCid = await uploadJsonToPinata(meta, `dacs-student-app-${connectedAddr}`);
+
+    setResult("signupResult", "pending", "⏳ Submitting application on-chain…");
+    const tx = await (registry as Contract).requestStudent(`ipfs://${jsonCid}`);
+    await tx.wait();
+
+    setResult("signupResult", "success", "✅ Application submitted. Routing…");
+    await detectAndRoute(connectedAddr);
+  } catch (e) {
+    setResult("signupResult", "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// School self-serve application: upload doc + metadata to IPFS, then record the
+// request on-chain via requestIssuer. The owner reviews it from the Issuer dash.
+async function submitSchoolApplication(btn: HTMLButtonElement): Promise<void> {
+  setLoading(btn, true);
+  try {
+    if (!connectedAddr) throw new Error("Wallet not connected.");
+    await ensureConnected();
+    const name    = getVal("applySchoolName");
+    const contact = getVal("applyContact");
+    const note    = getVal("applyNote");
+    const docFile = (document.getElementById("applyDoc") as HTMLInputElement | null)?.files?.[0] ?? null;
+    if (!name)    throw new Error("Enter the institution name.");
+    if (!contact) throw new Error("Enter a contact email.");
+    if (!docFile) throw new Error("Attach a supporting PDF document.");
+
+    setResult("signupResult", "pending", "⬆ Uploading supporting document to IPFS…");
+    const docCid = await uploadToPinata(docFile);
+
+    setResult("signupResult", "pending", "⬆ Pinning application metadata…");
+    const meta = { version: 1, name, contact, note, docCid, appliedAt: new Date().toISOString() };
+    const jsonCid = await uploadJsonToPinata(meta, `dacs-issuer-app-${connectedAddr}`);
+
+    setResult("signupResult", "pending", "⏳ Submitting application on-chain…");
+    const tx = await (registry as Contract).requestIssuer(`ipfs://${jsonCid}`);
+    await tx.wait();
+
+    setResult("signupResult", "success", "✅ Application submitted. Routing…");
     await detectAndRoute(connectedAddr);
   } catch (e) {
     setResult("signupResult", "error", `❌ ${errMsg(e)}`);
@@ -531,15 +697,40 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
     if (!gradDate)  throw new Error("Pick a graduation date.");
     if (!pdfFile)   throw new Error("Select a diploma PDF file.");
 
-    let cid: string;
+    let pdfCid: string;
     try {
-      cid = await uploadToPinata(pdfFile);
+      pdfCid = await uploadToPinata(pdfFile);
     } catch (uploadErr) {
       throw new Error(`Upload failed: ${errMsg(uploadErr)}`);
     }
 
-    const metadataURI = `ipfs://${cid}`;
-    setResult("issueResult", "pending", `⛓ Submitting to Sepolia… CID: ${cid.slice(0, 12)}…`);
+    // Phase 4 sidecar — record the rich field set off-chain (the hash alone
+    // can't recover degreeType). Student/Verifier dashboards read this to
+    // render a human-readable title for each credential.
+    setResult("issueResult", "pending", `📎 Pinning metadata sidecar…`);
+    const level     = getVal("issueLevel");
+    const major     = getVal("issueMajor");
+    const dept      = getVal("issueDept");
+    const studentId = getVal("issueStudentId");
+    let jsonCid: string;
+    try {
+      jsonCid = await uploadJsonToPinata(
+        {
+          version:    1,
+          level, major, dept, studentId,
+          degreeType: composed,
+          gradDate,
+          pdfCid,
+          pinnedAt:   new Date().toISOString(),
+        },
+        `dacs-cred-${studentAddr.slice(0, 8)}-${level}-${major}`,
+      );
+    } catch (sidecarErr) {
+      throw new Error(`Sidecar pin failed: ${errMsg(sidecarErr)}`);
+    }
+
+    const metadataURI = `ipfs://${jsonCid}`;
+    setResult("issueResult", "pending", `⛓ Submitting to Sepolia… JSON CID: ${jsonCid.slice(0, 12)}…`);
 
     const credHash = computeCredentialHash(studentAddr, composed, gradDate);
     const tx = await (credential as Contract).issueCredential(studentAddr, credHash, metadataURI);
@@ -550,7 +741,8 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
       "issueResult",
       "success",
       `✅ Issued!<br>` +
-      `IPFS: <a href="${PINATA_GATEWAY}${cid}" target="_blank" rel="noopener">${cid.slice(0, 14)}…</a><br>` +
+      `PDF: <a href="${PINATA_GATEWAY}${pdfCid}"  target="_blank" rel="noopener">${pdfCid.slice(0, 14)}…</a><br>` +
+      `Sidecar: <a href="${PINATA_GATEWAY}${jsonCid}" target="_blank" rel="noopener">${jsonCid.slice(0, 14)}…</a><br>` +
       `<span class="mono">${credHash}</span>` +
       txLink(tx.hash)
     );
@@ -810,6 +1002,1002 @@ async function loadDashboardDetails(credHash: string): Promise<void> {
   }
 }
 
+// ─── Credential metadata (Phase 4 sidecar w/ legacy PDF fallback) ────────────
+
+type CredMeta =
+  | { kind: "json"; level: string; major: string; dept: string; studentId: string;
+      degreeType: string; gradDate: string; pdfCid: string; }
+  | { kind: "pdf-legacy"; pdfCid: string; }
+  | { kind: "empty" }
+  | { kind: "error"; message: string };
+
+async function fetchCredentialMetadata(uri: string): Promise<CredMeta> {
+  if (!uri)                       return { kind: "empty" };
+  if (!uri.startsWith("ipfs://")) return { kind: "error", message: `Unexpected URI scheme: ${uri}` };
+
+  const cid = uri.replace("ipfs://", "");
+  try {
+    const r = await fetch(`${PINATA_GATEWAY}${cid}`);
+    if (!r.ok) return { kind: "error", message: `IPFS fetch failed (${r.status})` };
+
+    // Peek the first non-whitespace byte. JSON sidecars start with `{`,
+    // PDFs start with `%PDF-`. Fetching everything as text and JSON-parsing
+    // works either way, but we avoid loading multi-MB PDFs as text by
+    // sniffing a small slice first.
+    const blob = await r.blob();
+    const head = await blob.slice(0, 8).text();
+
+    if (head.trim().startsWith("{")) {
+      try {
+        const data = JSON.parse(await blob.text()) as Record<string, unknown>;
+        if (typeof data.pdfCid === "string" && data.pdfCid.length > 0) {
+          return {
+            kind:       "json",
+            level:      String(data.level     ?? ""),
+            major:      String(data.major     ?? ""),
+            dept:       String(data.dept      ?? ""),
+            studentId:  String(data.studentId ?? ""),
+            degreeType: String(data.degreeType?? ""),
+            gradDate:   String(data.gradDate  ?? ""),
+            pdfCid:     data.pdfCid,
+          };
+        }
+      } catch {
+        /* fall through to legacy treatment */
+      }
+    }
+
+    // Treat as direct PDF reference (legacy creds issued before the JSON sidecar).
+    return { kind: "pdf-legacy", pdfCid: cid };
+  } catch (e) {
+    return { kind: "error", message: errMsg(e) };
+  }
+}
+
+function cardTitleFromMeta(
+  meta: CredMeta,
+  credHash: string,
+  extras: { pinName?: string | null; localLabel?: string | null } = {},
+): { title: string; subtitle: string } {
+  // JSON sidecar wins — full structured degree label.
+  if (meta.kind === "json") {
+    const level = meta.level || "Degree";
+    const major = meta.major || "—";
+    const dept  = meta.dept ? ` · ${meta.dept}` : "";
+    const sid   = meta.studentId ? ` · Student ID ${meta.studentId}` : "";
+    return {
+      title:    `${level} of ${major}`,
+      subtitle: `${dept.slice(3)}${sid}`,
+    };
+  }
+  // Holder-typed local override (Phase 5).
+  if (extras.localLabel) {
+    return {
+      title:    extras.localLabel,
+      subtitle: "Custom label · click ✎ to edit",
+    };
+  }
+  // Recovered Pinata pin filename (Phase 5).
+  if (extras.pinName) {
+    return {
+      title:    extras.pinName,
+      subtitle: "From original PDF filename · click ✎ to edit",
+    };
+  }
+  // Hash fallback.
+  return {
+    title:    `Credential ${credHash.slice(0, 10)}…${credHash.slice(-6)}`,
+    subtitle: "Legacy credential — click ✎ to add a label or issue a new one.",
+  };
+}
+
+// ─── STUDENT DASHBOARD (Phase 3) ─────────────────────────────────────────────
+
+function shortHash(credHash: string): string {
+  // 10 hex chars after the 0x prefix — used as a stable DOM id suffix per card.
+  return credHash.slice(2, 12);
+}
+
+function shortAddr(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+// Resolve an issuer wallet to its school name from the on-chain issuer application
+// (IssuerRequested → IPFS metadata). Falls back to the short address when there is
+// no application, no name, or the registry is unavailable. Cached per issuer.
+const schoolNameCache = new Map<string, string>(); // issuerLower -> display name
+
+async function resolveSchoolName(issuerAddr: string): Promise<string> {
+  const key = issuerAddr.toLowerCase();
+  const cached = schoolNameCache.get(key);
+  if (cached !== undefined) return cached;
+
+  let name = shortAddr(issuerAddr); // fallback
+  if (registry) {
+    try {
+      const logs = await (registry as Contract).queryFilter(
+        (registry as Contract).filters.IssuerRequested(issuerAddr), 0, "latest");
+      const last = logs[logs.length - 1] as EventLog | undefined;
+      const uri = last?.args?.metadataURI as string | undefined;
+      if (uri) {
+        const cid = uri.replace(/^ipfs:\/\//, "");
+        const res = await fetch(`${PINATA_GATEWAY}${cid}`);
+        if (res.ok) {
+          const meta = (await res.json()) as { name?: string };
+          if (meta.name && meta.name.trim()) name = meta.name.trim();
+        }
+      }
+    } catch (e) {
+      console.warn(`resolveSchoolName(${issuerAddr.slice(0, 10)}…):`, errMsg(e));
+    }
+  }
+  schoolNameCache.set(key, name);
+  return name;
+}
+
+async function renderStudentDashboard(addr: string): Promise<void> {
+  const container = document.getElementById("studentCreds");
+  if (!container) return;
+  if (!credential || !provider) {
+    container.innerHTML = `<div class="empty-state">Wallet not connected.</div>`;
+    return;
+  }
+
+  // Greeting from localStorage signup profile (if any)
+  const profileRaw = localStorage.getItem(profileKey(addr));
+  if (profileRaw) {
+    try {
+      const p = JSON.parse(profileRaw) as { name?: string; school?: string };
+      if (p.name)   setText("studentGreeting", `Welcome, ${p.name}`);
+      if (p.school) setText("studentSubtitle", `${p.school} · ${addr.slice(0, 6)}…${addr.slice(-4)}`);
+    } catch {
+      /* profile JSON corrupted — keep default greeting */
+    }
+  } else {
+    setText("studentSubtitle", `${addr.slice(0, 6)}…${addr.slice(-4)}`);
+  }
+
+  // Issued credentials where this wallet is the holder
+  let issuedLogs: EventLog[] = [];
+  try {
+    const filter = (credential as Contract).filters.CredentialIssued(null, null, addr);
+    issuedLogs   = (await (credential as Contract).queryFilter(filter, 0, "latest")) as EventLog[];
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state">Failed to load credentials: ${errMsg(e)}</div>`;
+    return;
+  }
+
+  if (issuedLogs.length === 0) {
+    container.innerHTML = `<div class="empty-state">No credentials issued to this wallet yet.</div>`;
+    return;
+  }
+
+  // Sort earliest issued first (by blockNumber, then logIndex as tiebreaker)
+  issuedLogs.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+    return (a.index ?? 0) - (b.index ?? 0);
+  });
+
+  // Revocation status per credHash (parallel)
+  const revokedSet = new Set<string>();
+  await Promise.all(issuedLogs.map(async (ev) => {
+    const h = ev.args[0] as string;
+    try {
+      const revFilter = (credential as Contract).filters.CredentialRevoked(h);
+      const revLogs   = await (credential as Contract).queryFilter(revFilter, 0, "latest");
+      if (revLogs.length > 0) revokedSet.add(h);
+    } catch (e) {
+      console.warn(`Revoke check for ${h.slice(0, 10)}… failed:`, errMsg(e));
+    }
+  }));
+
+  // Issued block timestamps (parallel)
+  const issuedDates = await Promise.all(issuedLogs.map(async (ev) => {
+    try {
+      const block = await provider!.getBlock(ev.blockNumber);
+      return block ? formatTs(Number(block.timestamp)) : "Unknown";
+    } catch {
+      return "Unknown";
+    }
+  }));
+
+  // Sidecar metadata (parallel) — falls back to legacy/hash title on failure
+  const metas: CredMeta[] = await Promise.all(issuedLogs.map(async (ev) => {
+    const h = ev.args[0] as string;
+    try {
+      const uri: string = await (credential as Contract).getMetadataURI(h);
+      return await fetchCredentialMetadata(uri);
+    } catch (e) {
+      console.warn(`Metadata fetch for ${h.slice(0, 10)}… failed:`, errMsg(e));
+      return { kind: "error", message: errMsg(e) };
+    }
+  }));
+
+  // Pinata pin filename recovery for non-JSON metas (Phase 5).
+  // Only pdf-legacy has a known CID; empty/error kinds skip the API call.
+  const pinNames: (string | null)[] = await Promise.all(metas.map(async (m) => {
+    if (m.kind === "pdf-legacy") return await fetchPinName(m.pdfCid);
+    return null;
+  }));
+
+  // Build one credential card element (closes over the precomputed arrays).
+  const buildCard = (ev: EventLog, i: number): HTMLElement => {
+    const credHash   = ev.args[0] as string;
+    const issuerAddr = ev.args[1] as string;
+    const isRevoked  = revokedSet.has(credHash);
+    const sh         = shortHash(credHash);
+    const issuedDate = issuedDates[i];
+    const meta       = metas[i];
+    const pinName    = pinNames[i];
+    const localLabel = localStorage.getItem(`dacs:credLabel:${credHash.toLowerCase()}`);
+    const pendingReq = findReissueByCredHash(credHash);
+    const { title, subtitle } = cardTitleFromMeta(meta, credHash, { pinName, localLabel });
+
+    // ✎ button shown only when the title is derived from non-sidecar sources
+    // (i.e. the holder can override). For sidecar-backed creds the title is
+    // already authoritative.
+    const showLabelEdit = meta.kind !== "json";
+    const labelBtn      = showLabelEdit
+      ? `<button class="btn-label-edit" onclick="toggleLabelEdit('${credHash}')" title="Edit local label">✎</button>`
+      : "";
+    const labelEditRow  = showLabelEdit
+      ? `<div id="labelEdit_${sh}" class="label-edit" style="display:none">
+           <input id="labelInput_${sh}" maxlength="80" placeholder="e.g., Bachelor of CS · 2024" value="${escapeHtml(localLabel ?? "")}" />
+           <button class="btn-holder" onclick="saveLocalLabel('${credHash}', this)">Save</button>
+           <button class="btn-mail"   onclick="toggleLabelEdit('${credHash}')">Cancel</button>
+         </div>`
+      : "";
+
+    // Phase 6 — pending / approved / rejected reissue badges.
+    let reissueBadge = "";
+    if (pendingReq?.status === "pending") {
+      reissueBadge = `<span class="dash-badge pending" style="margin-left:8px">⏳ Reissue Pending</span>`;
+    } else if (pendingReq?.status === "approved") {
+      reissueBadge = `<span class="dash-badge ok" style="margin-left:8px">✓ Reissued — see new cred</span>`;
+    } else if (pendingReq?.status === "rejected") {
+      reissueBadge = `<span class="dash-badge warn" style="margin-left:8px" title="${escapeHtml(pendingReq.rejectReason ?? "")}">✗ Reissue Rejected</span>`;
+    }
+    const reissueBtnDisabled = pendingReq?.status === "pending" ? "disabled" : "";
+
+    const card = document.createElement("div");
+    card.className = `cred-card${isRevoked ? " revoked" : ""}`;
+    card.dataset.hash = credHash;
+    card.innerHTML = `
+      <div class="cred-title">
+        <div>
+          <h4>${escapeHtml(title)} ${labelBtn}</h4>
+          <div class="cred-subtitle">${escapeHtml(subtitle)}</div>
+        </div>
+        <div>
+          ${isRevoked
+            ? `<span class="dash-badge warn">✗ Revoked</span>`
+            : `<span class="dash-badge ok">✓ Active</span>`}
+          ${reissueBadge}
+        </div>
+      </div>
+      ${labelEditRow}
+      <div class="cred-meta">
+        <span class="k">Issued</span><span class="v">${issuedDate}</span>
+        ${meta.kind === "json" && meta.gradDate ? `<span class="k">Graduated</span><span class="v">${meta.gradDate}</span>` : ""}
+        <span class="k">Issuer</span><span class="v cred-hash">${issuerAddr}</span>
+        <span class="k">Hash</span><span class="v cred-hash">${credHash}</span>
+      </div>
+      <div class="cred-actions">
+        <button class="btn-dl"     onclick="studentDownload('${credHash}', this)">⬇ Download PDF</button>
+        <button class="btn-holder" onclick="toggleGrantForm('${sh}')">⛓ Manage Access</button>
+        <button class="btn-mail"   onclick="requestReissuance('${credHash}', '${issuerAddr}')" ${reissueBtnDisabled}>✉ Request Re-issuance</button>
+      </div>
+      <div id="grantForm_${sh}" class="cred-grant-form">
+        <input id="grantVerifier_${sh}" placeholder="Verifier address 0x…" />
+        <button class="btn-holder" onclick="studentGrantAccess('${credHash}', this)">Grant</button>
+        <button class="btn-issuer" onclick="studentRevokeAccess('${credHash}', this)">Revoke</button>
+      </div>
+      <div id="cardResult_${sh}" class="result"></div>
+    `;
+    return card;
+  };
+
+  // Group credentials by issuing school, preserving earliest-first order.
+  const groups = new Map<string, number[]>(); // issuerLower -> indices into issuedLogs
+  issuedLogs.forEach((ev, i) => {
+    const key = (ev.args[1] as string).toLowerCase();
+    const arr = groups.get(key);
+    if (arr) arr.push(i);
+    else groups.set(key, [i]);
+  });
+
+  // Resolve a display name per unique issuer (cached, parallel).
+  const issuerKeys = [...groups.keys()];
+  const names = await Promise.all(
+    issuerKeys.map((k) => resolveSchoolName(issuedLogs[groups.get(k)![0]].args[1] as string)),
+  );
+
+  container.innerHTML = "";
+  issuerKeys.forEach((key, gi) => {
+    const indices    = groups.get(key)!;
+    const issuerAddr = issuedLogs[indices[0]].args[1] as string;
+
+    const group = document.createElement("div");
+    group.className = "cred-school-group";
+
+    const head = document.createElement("h3");
+    head.className = "cred-school-head";
+    head.innerHTML =
+      `🏛 ${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
+    group.appendChild(head);
+
+    for (const i of indices) group.appendChild(buildCard(issuedLogs[i], i));
+    container.appendChild(group);
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function toggleLabelEdit(credHash: string): void {
+  const sh   = shortHash(credHash);
+  const row  = document.getElementById(`labelEdit_${sh}`);
+  if (!row) return;
+  row.style.display = row.style.display === "none" ? "flex" : "none";
+}
+
+function saveLocalLabel(credHash: string, btn: HTMLButtonElement): void {
+  const sh    = shortHash(credHash);
+  const input = document.getElementById(`labelInput_${sh}`) as HTMLInputElement | null;
+  if (!input) return;
+  const value = input.value.trim();
+  const key   = `dacs:credLabel:${credHash.toLowerCase()}`;
+  setLoading(btn, true);
+  try {
+    if (value.length === 0) {
+      localStorage.removeItem(key);
+    } else if (value.length > 80) {
+      setResult(`cardResult_${sh}`, "error", "❌ Label must be 80 characters or fewer.");
+      return;
+    } else {
+      localStorage.setItem(key, value);
+    }
+    renderStudentDashboard(connectedAddr).catch((e) => {
+      console.error("Dashboard re-render failed:", errMsg(e));
+    });
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function toggleGrantForm(short: string): void {
+  const form = document.getElementById(`grantForm_${short}`);
+  if (form) form.classList.toggle("show");
+}
+
+async function studentDownload(credHash: string, btn: HTMLButtonElement): Promise<void> {
+  const sh = shortHash(credHash);
+  setLoading(btn, true);
+  setResult(`cardResult_${sh}`, "pending", "🔍 Resolving IPFS metadata…");
+  try {
+    await ensureConnected();
+    const uri: string = await (credential as Contract).getMetadataURI(credHash);
+    const meta        = await fetchCredentialMetadata(uri);
+
+    let pdfCid: string;
+    if (meta.kind === "json" || meta.kind === "pdf-legacy") {
+      pdfCid = meta.pdfCid;
+    } else if (meta.kind === "empty") {
+      throw new Error("No diploma attached to this credential.");
+    } else {
+      throw new Error(meta.message);
+    }
+
+    const url = `${PINATA_GATEWAY}${pdfCid}`;
+    setResult(`cardResult_${sh}`, "pending", "📥 Downloading PDF from IPFS…");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`IPFS fetch failed (${response.status}).`);
+
+    const blob      = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a         = document.createElement("a");
+    a.href          = objectUrl;
+    a.download      = `diploma_${sh}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+
+    setResult(`cardResult_${sh}`, "success",
+      `✅ Downloaded!<br><a href="${url}" target="_blank" rel="noopener">View on IPFS: ${pdfCid.slice(0, 16)}…</a>`);
+  } catch (e) {
+    setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function studentGrantAccess(credHash: string, btn: HTMLButtonElement): Promise<void> {
+  const sh = shortHash(credHash);
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const verifier = getVal(`grantVerifier_${sh}`);
+    if (!verifier)            throw new Error("Enter a verifier address.");
+    if (!isAddress(verifier)) throw new Error(`Invalid verifier address: "${verifier}".`);
+    const tx = await (credential as Contract).grantVerifierAccess(credHash, verifier);
+    setResult(`cardResult_${sh}`, "pending", `⏳ Pending… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(`cardResult_${sh}`, "success",
+      `✅ Access granted to ${verifier.slice(0, 8)}… ${txLink(tx.hash)}`);
+  } catch (e) {
+    setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function studentRevokeAccess(credHash: string, btn: HTMLButtonElement): Promise<void> {
+  const sh = shortHash(credHash);
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const verifier = getVal(`grantVerifier_${sh}`);
+    if (!verifier)            throw new Error("Enter a verifier address.");
+    if (!isAddress(verifier)) throw new Error(`Invalid verifier address: "${verifier}".`);
+    const tx = await (credential as Contract).revokeVerifierAccess(credHash, verifier);
+    setResult(`cardResult_${sh}`, "pending", `⏳ Pending… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(`cardResult_${sh}`, "success",
+      `✅ Access revoked for ${verifier.slice(0, 8)}… ${txLink(tx.hash)}`);
+  } catch (e) {
+    setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ─── Phase 6: Reissuance request flow ─────────────────────────────────────────
+//
+// Replaces the previous mailto flow. Opens a modal prefilled from the current
+// sidecar (or blank for legacy creds). Submission writes to the localStorage
+// queue; the issuer dashboard picks it up on the next login.
+
+let currentReissueSidecar: { level?: string; major?: string; dept?: string; studentId?: string; gradDate?: string } = {};
+
+async function requestReissuance(credHash: string, issuerAddr: string): Promise<void> {
+  const modal = document.getElementById("reissueModal");
+  if (!modal) return;
+
+  // Reset
+  (document.getElementById("reissueCredHash")   as HTMLInputElement).value = credHash;
+  (document.getElementById("reissueIssuerAddr") as HTMLInputElement).value = issuerAddr;
+  (document.getElementById("reissuePdfCid")     as HTMLInputElement).value = "";
+  (document.getElementById("reissueReason")     as HTMLTextAreaElement).value = "";
+  setResult("reissueModalResult", "pending", "🔎 Loading current credential details…");
+  modal.classList.add("show");
+
+  currentReissueSidecar = {};
+
+  // Best-effort prefill from current sidecar
+  try {
+    if (!credential) throw new Error("Wallet not connected.");
+    const uri  = await (credential as Contract).getMetadataURI(credHash);
+    const meta = await fetchCredentialMetadata(uri);
+    if (meta.kind === "json") {
+      currentReissueSidecar = {
+        level:     meta.level,
+        major:     meta.major,
+        dept:      meta.dept,
+        studentId: meta.studentId,
+        gradDate:  meta.gradDate,
+      };
+      (document.getElementById("reissuePdfCid")    as HTMLInputElement).value = meta.pdfCid;
+      (document.getElementById("reissueLevel")     as HTMLSelectElement).value = meta.level   ?? "";
+      (document.getElementById("reissueDept")      as HTMLSelectElement).value = meta.dept    ?? "";
+      refreshMajors("reissue");
+      (document.getElementById("reissueMajor")     as HTMLInputElement).value = meta.major     ?? "";
+      (document.getElementById("reissueStudentId") as HTMLInputElement).value = meta.studentId ?? "";
+      (document.getElementById("reissueGradDate")  as HTMLInputElement).value = meta.gradDate  ?? "";
+      setResult("reissueModalResult", "success", "✅ Loaded current fields — edit any value, then submit.");
+    } else if (meta.kind === "pdf-legacy") {
+      (document.getElementById("reissuePdfCid")    as HTMLInputElement).value = meta.pdfCid;
+      setResult("reissueModalResult", "pending",
+        "⚠️ Legacy credential — no structured fields stored. Fill in the new fields below.");
+    } else {
+      setResult("reissueModalResult", "pending", "⚠️ No sidecar found — fill in the new fields below.");
+    }
+  } catch (e) {
+    setResult("reissueModalResult", "error", `⚠️ Could not prefill: ${errMsg(e)}. Fill in manually.`);
+  }
+}
+
+function closeReissueModal(): void {
+  const modal = document.getElementById("reissueModal");
+  if (modal) modal.classList.remove("show");
+}
+
+function submitReissueRequest(btn: HTMLButtonElement): void {
+  setLoading(btn, true);
+  try {
+    const credHash   = (document.getElementById("reissueCredHash")   as HTMLInputElement).value;
+    const issuerAddr = (document.getElementById("reissueIssuerAddr") as HTMLInputElement).value;
+    const pdfCid     = (document.getElementById("reissuePdfCid")     as HTMLInputElement).value;
+    const reason     = (document.getElementById("reissueReason")     as HTMLTextAreaElement).value.trim();
+    const level      = (document.getElementById("reissueLevel")      as HTMLSelectElement).value;
+    const dept       = (document.getElementById("reissueDept")       as HTMLSelectElement).value;
+    const major      = (document.getElementById("reissueMajor")      as HTMLInputElement).value.trim();
+    const studentId  = (document.getElementById("reissueStudentId")  as HTMLInputElement).value.trim();
+    const gradDate   = (document.getElementById("reissueGradDate")   as HTMLInputElement).value;
+
+    if (!credHash || !issuerAddr) throw new Error("Missing credential identifiers.");
+    if (reason.length < 10)       throw new Error("Reason must be at least 10 characters.");
+    if (!level)                   throw new Error("Pick a degree level.");
+    if (!dept)                    throw new Error("Pick a department.");
+    if (!major)                   throw new Error("Enter a major.");
+    if (!studentId)               throw new Error("Enter a student ID.");
+    if (!gradDate)                throw new Error("Pick a graduation date.");
+
+    // Reject pipe characters that would collide with the degreeType separator.
+    for (const [name, v] of [["level", level], ["dept", dept], ["major", major], ["studentId", studentId]] as const) {
+      if (v.includes("|")) throw new Error(`Field "${name}" cannot contain the | character.`);
+    }
+
+    // Require at least one field to differ from the current sidecar — otherwise
+    // the new hash would collide with the existing on-chain hash.
+    const cur = currentReissueSidecar;
+    if (cur.level !== undefined) {
+      const same =
+        cur.level === level &&
+        cur.dept  === dept  &&
+        cur.major === major &&
+        cur.studentId === studentId &&
+        cur.gradDate  === gradDate;
+      if (same) throw new Error("Edit at least one field — the new credential needs a different hash.");
+    }
+
+    const id: string = `${Date.now()}-${credHash.slice(2, 10)}`;
+    const req: ReissueReq = {
+      id,
+      credHash,
+      holderAddr:  connectedAddr,
+      issuerAddr,
+      pdfCid:      pdfCid || "",
+      requestedAt: Date.now(),
+      reason,
+      newFields:   { level, major, dept, studentId, gradDate },
+      status:      "pending",
+    };
+    addReissueRequest(req);
+
+    setResult("reissueModalResult", "success", "✅ Submitted. Issuer will process this on next login.");
+    setTimeout(() => {
+      closeReissueModal();
+      renderStudentDashboard(connectedAddr).catch((e) => {
+        console.error("Dashboard re-render failed:", errMsg(e));
+      });
+    }, 700);
+  } catch (e) {
+    setResult("reissueModalResult", "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ─── Phase 6: Issuer-side pending requests panel ──────────────────────────────
+
+function renderPendingReissues(addr: string): void {
+  const container = document.getElementById("pendingReissuesList");
+  if (!container) return;
+
+  const pending = listPendingReissuesForIssuer(addr);
+  if (pending.length === 0) {
+    container.className = "empty-state";
+    container.textContent = "No pending requests.";
+    return;
+  }
+
+  container.className = "";
+  container.innerHTML = "";
+  for (const req of pending) {
+    const f         = req.newFields;
+    const holderTxt = `${req.holderAddr.slice(0, 8)}…${req.holderAddr.slice(-4)}`;
+    const credShort = `${req.credHash.slice(0, 10)}…${req.credHash.slice(-6)}`;
+    const ageMin    = Math.max(0, Math.round((Date.now() - req.requestedAt) / 60000));
+    const pdfNote   = req.pdfCid
+      ? `Original PDF: <span class="cred-hash">${req.pdfCid}</span>`
+      : `<strong style="color: var(--error-b)">⚠️ Legacy credential — issuer must upload a fresh PDF on approval.</strong>`;
+
+    const card = document.createElement("div");
+    card.className = "reissue-req-card";
+    card.id        = `reissueReqCard_${req.id}`;
+    card.innerHTML = `
+      <div class="rr-head">
+        <div>
+          <strong>From ${escapeHtml(holderTxt)}</strong>
+          <div style="font-size:0.72rem; color: var(--muted)">${ageMin} min ago</div>
+        </div>
+        <span class="dash-badge pending">⏳ Pending</span>
+      </div>
+      <div class="rr-reason"><em>"${escapeHtml(req.reason)}"</em></div>
+      <div class="rr-fields">
+        <span class="k">Original</span><span class="v cred-hash">${credShort}</span>
+        <span class="k">Level</span><span>${escapeHtml(f.level)}</span>
+        <span class="k">Dept</span><span>${escapeHtml(f.dept)}</span>
+        <span class="k">Major</span><span>${escapeHtml(f.major)}</span>
+        <span class="k">Student ID</span><span>${escapeHtml(f.studentId)}</span>
+        <span class="k">Grad Date</span><span>${escapeHtml(f.gradDate)}</span>
+        <span class="k">PDF</span><span>${pdfNote}</span>
+      </div>
+      <div class="rr-actions">
+        <button class="btn-issuer" onclick="approveReissue('${req.id}', this)">✓ Approve & Reissue</button>
+        <button class="btn-mail"   onclick="rejectReissue('${req.id}', this)">✗ Reject</button>
+      </div>
+      <div id="reissueReqResult_${req.id}" class="result"></div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+async function pickFreshPdf(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type   = "file";
+    input.accept = ".pdf";
+    input.onchange = () => {
+      const f = input.files?.[0] ?? null;
+      resolve(f);
+    };
+    input.click();
+    // If the dialog is dismissed, onchange never fires — caller relies on the
+    // user clicking Approve again. Acceptable for a one-click demo flow.
+  });
+}
+
+async function approveReissue(reqId: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `reissueReqResult_${reqId}`;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+
+    const all = listPendingReissuesForIssuer(connectedAddr).filter((r) => r.id === reqId);
+    const req = all[0];
+    if (!req) throw new Error("Request not found or no longer pending.");
+
+    const f          = req.newFields;
+    const degreeType = `${f.level}|${f.major}|${f.dept}|${f.studentId}`;
+    const newHash    = computeCredentialHash(req.holderAddr, degreeType, f.gradDate);
+    if (newHash.toLowerCase() === req.credHash.toLowerCase()) {
+      throw new Error("New fields produce the same hash as the original — request rejected by hash check.");
+    }
+
+    // Legacy: must upload a fresh PDF before pinning the sidecar.
+    let pdfCid = req.pdfCid;
+    if (!pdfCid) {
+      setResult(resultId, "pending", "📎 Pick a PDF to attach to the reissued credential…");
+      const file = await pickFreshPdf();
+      if (!file) throw new Error("No PDF selected — approval cancelled.");
+      setResult(resultId, "pending", `⬆ Uploading new PDF to IPFS (${file.name})…`);
+      pdfCid = await uploadToPinata(file);
+    }
+
+    // Pin sidecar
+    setResult(resultId, "pending", "⬆ Pinning new JSON sidecar to IPFS…");
+    const sidecar = {
+      version:        1,
+      level:          f.level,
+      major:          f.major,
+      dept:           f.dept,
+      studentId:      f.studentId,
+      degreeType,
+      gradDate:       f.gradDate,
+      pdfCid,
+      pinnedAt:       new Date().toISOString(),
+      reissuedFrom:   req.credHash,
+    };
+    const jsonCid = await uploadJsonToPinata(sidecar, `dacs-reissue-${reqId}`);
+
+    // Revoke old (skip if already revoked)
+    setResult(resultId, "pending", "⏳ Revoking old credential…");
+    try {
+      const tx1 = await (credential as Contract).revokeCredential(req.credHash);
+      await tx1.wait();
+    } catch (e) {
+      const msg = errMsg(e);
+      if (!/already revoked/i.test(msg) && !/CredentialAlreadyRevoked/i.test(msg)) {
+        throw new Error(`Revoke failed: ${msg}`);
+      }
+      console.warn("Old credential already revoked — continuing.");
+    }
+
+    // Issue new
+    setResult(resultId, "pending", "⏳ Issuing new credential…");
+    const tx2 = await (credential as Contract).issueCredential(
+      req.holderAddr,
+      newHash,
+      `ipfs://${jsonCid}`,
+    );
+    await tx2.wait();
+
+    updateReissueRequest(reqId, {
+      status:      "approved",
+      newCredHash: newHash,
+      newTxHash:   tx2.hash,
+    });
+
+    setResult(resultId, "success",
+      `✅ Reissued. New hash <span class="cred-hash">${newHash.slice(0, 14)}…</span> ${txLink(tx2.hash)}`);
+    // Refresh panel
+    renderPendingReissues(connectedAddr);
+  } catch (e) {
+    setResult(resultId, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function rejectReissue(reqId: string, btn: HTMLButtonElement): void {
+  const resultId = `reissueReqResult_${reqId}`;
+  const reason = window.prompt("Reason for rejection (shown to the student):", "Insufficient information");
+  if (reason === null) return;
+  setLoading(btn, true);
+  try {
+    updateReissueRequest(reqId, {
+      status:       "rejected",
+      rejectReason: reason.slice(0, 200),
+    });
+    setResult(resultId, "success", "✓ Request rejected.");
+    renderPendingReissues(connectedAddr);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ─── OWNER: Pending school applications ───────────────────────────────────────
+// On-chain queue: query IssuerRequested events, keep only those still Pending
+// (status==1), fetch each application's IPFS metadata, render Approve/Reject.
+async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
+  const container = document.getElementById("pendingSchoolAppsList");
+  if (!container || !registry) return;
+  void ownerAddr; // applications are global; owner-gated by the section's visibility
+  container.className = "empty-state";
+  container.textContent = "Loading…";
+
+  try {
+    const logs = await (registry as Contract).queryFilter(
+      (registry as Contract).filters.IssuerRequested(), 0, "latest");
+
+    // Latest request per applicant (logs come back chronological → last wins).
+    const latest = new Map<string, EventLog>();
+    for (const log of logs as EventLog[]) {
+      const applicant = (log.args?.applicant as string).toLowerCase();
+      latest.set(applicant, log);
+    }
+
+    // Keep only applications still Pending on-chain.
+    const pending: { applicant: string; metadataURI: string }[] = [];
+    await Promise.all([...latest.values()].map(async (log) => {
+      const applicant = log.args?.applicant as string;
+      const status = Number(await (registry as Contract).issuerRequestStatus(applicant));
+      if (status === 1) pending.push({ applicant, metadataURI: log.args?.metadataURI as string });
+    }));
+
+    if (pending.length === 0) {
+      container.className = "empty-state";
+      container.textContent = "No pending applications.";
+      return;
+    }
+
+    const cards = await Promise.all(pending.map(async (p) => {
+      let meta: { name?: string; contact?: string; note?: string; docCid?: string } = {};
+      try {
+        const cid = p.metadataURI.replace(/^ipfs:\/\//, "");
+        const res = await fetch(`${PINATA_GATEWAY}${cid}`);
+        if (res.ok) meta = await res.json();
+      } catch (err) { console.warn("application metadata fetch:", errMsg(err)); }
+
+      const short   = `${p.applicant.slice(0, 8)}…${p.applicant.slice(-4)}`;
+      const docLink = meta.docCid
+        ? `<a href="${PINATA_GATEWAY}${meta.docCid}" target="_blank" rel="noopener">↗ View document</a>`
+        : "—";
+
+      return `
+        <div class="reissue-req-card" id="schoolAppCard_${p.applicant}">
+          <div class="rr-head">
+            <div>
+              <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
+              <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
+            </div>
+            <span class="dash-badge pending">⏳ Pending</span>
+          </div>
+          ${meta.note ? `<div class="rr-reason"><em>"${escapeHtml(meta.note)}"</em></div>` : ""}
+          <div class="rr-fields">
+            <span class="k">Contact</span><span>${escapeHtml(meta.contact ?? "—")}</span>
+            <span class="k">Wallet</span><span class="cred-hash">${escapeHtml(p.applicant)}</span>
+            <span class="k">Document</span><span>${docLink}</span>
+          </div>
+          <div class="rr-actions">
+            <button class="btn-issuer" onclick="approveSchoolApp('${p.applicant}', this)">✓ Approve &amp; Register</button>
+            <button class="btn-mail"   onclick="rejectSchoolApp('${p.applicant}', this)">✗ Reject</button>
+          </div>
+          <div id="schoolAppResult_${p.applicant}" class="result"></div>
+        </div>`;
+    }));
+
+    container.className = "";
+    container.innerHTML = cards.join("");
+  } catch (e) {
+    container.className = "empty-state";
+    container.textContent = `Error: ${errMsg(e)}`;
+  }
+}
+
+async function approveSchoolApp(addr: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `schoolAppResult_${addr}`;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).registerIssuer(addr);
+    setResult(resultId, "pending", `⏳ Registering… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(resultId, "success", `✅ Registered as issuer. ${txLink(tx.hash)}`);
+    renderPendingSchoolApps(connectedAddr);
+  } catch (e) {
+    const err = e as Error & { revert?: { name: string }; data?: string };
+    const isAlreadyReg =
+      err.revert?.name === "AlreadyRegistered" ||
+      (typeof err.data === "string" && err.data.startsWith("0x45ed80e9"));
+    if (isAlreadyReg) {
+      setResult(resultId, "success", "✅ Already registered.");
+      renderPendingSchoolApps(connectedAddr);
+    } else {
+      setResult(resultId, "error", `❌ ${errMsg(e)}`);
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function rejectSchoolApp(addr: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `schoolAppResult_${addr}`;
+  const reason = window.prompt("Reason for rejection (shown to the applicant):", "Could not verify institution");
+  if (reason === null) return;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).rejectIssuerRequest(addr, reason.slice(0, 200));
+    setResult(resultId, "pending", `⏳ Rejecting… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(resultId, "success", "✓ Application rejected.");
+    renderPendingSchoolApps(connectedAddr);
+  } catch (e) {
+    setResult(resultId, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ─── ADMIN: Pending student applications ──────────────────────────────────────
+// On-chain queue: query StudentRequested events, keep only those still Pending
+// (status==1), fetch each application's IPFS metadata, render Approve/Reject.
+async function renderPendingStudentApps(adminAddr: string): Promise<void> {
+  const container = document.getElementById("pendingStudentAppsList");
+  if (!container || !registry) return;
+  void adminAddr; // applications are global; admin-gated by the view's visibility
+  container.className = "empty-state";
+  container.textContent = "Loading…";
+
+  try {
+    const logs = await (registry as Contract).queryFilter(
+      (registry as Contract).filters.StudentRequested(), 0, "latest");
+
+    // Latest request per applicant (logs come back chronological → last wins).
+    const latest = new Map<string, EventLog>();
+    for (const log of logs as EventLog[]) {
+      const applicant = (log.args?.applicant as string).toLowerCase();
+      latest.set(applicant, log);
+    }
+
+    // Keep only applications still Pending on-chain.
+    const pending: { applicant: string; metadataURI: string }[] = [];
+    await Promise.all([...latest.values()].map(async (log) => {
+      const applicant = log.args?.applicant as string;
+      const status = Number(await (registry as Contract).studentRequestStatus(applicant));
+      if (status === 1) pending.push({ applicant, metadataURI: log.args?.metadataURI as string });
+    }));
+
+    if (pending.length === 0) {
+      container.className = "empty-state";
+      container.textContent = "No pending applications.";
+      return;
+    }
+
+    const cards = await Promise.all(pending.map(async (p) => {
+      let meta: { name?: string; school?: string; contact?: string } = {};
+      try {
+        const cid = p.metadataURI.replace(/^ipfs:\/\//, "");
+        const res = await fetch(`${PINATA_GATEWAY}${cid}`);
+        if (res.ok) meta = await res.json();
+      } catch (err) { console.warn("application metadata fetch:", errMsg(err)); }
+
+      const short = `${p.applicant.slice(0, 8)}…${p.applicant.slice(-4)}`;
+
+      return `
+        <div class="reissue-req-card" id="studentAppCard_${p.applicant}">
+          <div class="rr-head">
+            <div>
+              <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
+              <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
+            </div>
+            <span class="dash-badge pending">⏳ Pending</span>
+          </div>
+          <div class="rr-fields">
+            <span class="k">School</span><span>${escapeHtml(meta.school ?? "—")}</span>
+            <span class="k">Contact</span><span>${escapeHtml(meta.contact || "—")}</span>
+            <span class="k">Wallet</span><span class="cred-hash">${escapeHtml(p.applicant)}</span>
+          </div>
+          <div class="rr-actions">
+            <button class="btn-issuer" onclick="approveStudentApp('${p.applicant}', this)">✓ Approve &amp; Register</button>
+            <button class="btn-mail"   onclick="rejectStudentApp('${p.applicant}', this)">✗ Reject</button>
+          </div>
+          <div id="studentAppResult_${p.applicant}" class="result"></div>
+        </div>`;
+    }));
+
+    container.className = "";
+    container.innerHTML = cards.join("");
+  } catch (e) {
+    container.className = "empty-state";
+    container.textContent = `Error: ${errMsg(e)}`;
+  }
+}
+
+async function approveStudentApp(addr: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `studentAppResult_${addr}`;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).registerStudent(addr);
+    setResult(resultId, "pending", `⏳ Registering… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(resultId, "success", `✅ Registered as student. ${txLink(tx.hash)}`);
+    renderPendingStudentApps(connectedAddr);
+  } catch (e) {
+    const err = e as Error & { revert?: { name: string }; data?: string };
+    const isAlreadyReg =
+      err.revert?.name === "AlreadyRegistered" ||
+      (typeof err.data === "string" && err.data.startsWith("0x45ed80e9"));
+    if (isAlreadyReg) {
+      setResult(resultId, "success", "✅ Already registered.");
+      renderPendingStudentApps(connectedAddr);
+    } else {
+      setResult(resultId, "error", `❌ ${errMsg(e)}`);
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function rejectStudentApp(addr: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `studentAppResult_${addr}`;
+  const reason = window.prompt("Reason for rejection (shown to the applicant):", "Could not verify enrollment");
+  if (reason === null) return;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).rejectStudentRequest(addr, reason.slice(0, 200));
+    setResult(resultId, "pending", `⏳ Rejecting… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(resultId, "success", "✓ Application rejected.");
+    renderPendingStudentApps(connectedAddr);
+  } catch (e) {
+    setResult(resultId, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // ─── Switch MetaMask account ──────────────────────────────────────────────────
 async function switchAccount(): Promise<void> {
   if (!window.ethereum) return;
@@ -839,6 +2027,23 @@ window.doVerify           = doVerify;
 window.logout             = logout;
 window.submitCreateAccount = submitCreateAccount;
 window.refreshMajors       = refreshMajors;
+window.studentDownload     = studentDownload;
+window.studentGrantAccess  = studentGrantAccess;
+window.studentRevokeAccess = studentRevokeAccess;
+window.toggleGrantForm     = toggleGrantForm;
+window.requestReissuance   = requestReissuance;
+window.toggleLabelEdit     = toggleLabelEdit;
+window.saveLocalLabel      = saveLocalLabel;
+window.submitReissueRequest = submitReissueRequest;
+window.closeReissueModal    = closeReissueModal;
+window.approveReissue       = approveReissue;
+window.rejectReissue        = rejectReissue;
+window.toggleSignupRole     = toggleSignupRole;
+window.reapply              = reapply;
+window.approveSchoolApp     = approveSchoolApp;
+window.rejectSchoolApp      = rejectSchoolApp;
+window.approveStudentApp    = approveStudentApp;
+window.rejectStudentApp     = rejectStudentApp;
 
 // Populate signup school <select> + degree dropdowns/datalist on boot
 // (DOM is ready — script tag at end of body).

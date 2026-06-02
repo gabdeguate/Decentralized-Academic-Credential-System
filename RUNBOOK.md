@@ -15,8 +15,9 @@ Step-by-step operational guide: install, compile, test, deploy, verify, interact
 7. [Deploy to Sepolia](#deploy-to-sepolia)
 8. [Verify on Etherscan](#verify-on-etherscan)
 9. [Start the Frontend](#start-the-frontend)
-10. [Interact with Deployed Contracts](#interact-with-deployed-contracts)
-11. [Troubleshooting](#troubleshooting)
+10. [Customize Demo Data (Schools / Majors / Departments)](#customize-demo-data-schools--majors--departments)
+11. [Interact with Deployed Contracts](#interact-with-deployed-contracts)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -384,14 +385,102 @@ This forces MetaMask to show its account selector. Page reloads after account sw
 
 ---
 
+## Customize Demo Data (Schools / Majors / Departments)
+
+All dropdown / autocomplete lists shown in the frontend forms (Create Account, Issue Credential, Revoke Credential, Verify Credential, Re-issuance modal) are driven by a single TypeScript module:
+
+**File:** `frontend/src/data/mockStudents.ts`
+
+You can edit it directly — Vite hot-reloads on save, so the dev server picks up changes without a rebuild.
+
+### Where each list shows up
+
+| Constant in `mockStudents.ts` | Shown in the UI as | Used by |
+|---|---|---|
+| `MOCK_SCHOOLS` | Create Account → "School" `<select>` | Signup form. Verifier search (Phase 3b — planned). |
+| `DEGREE_LEVELS` | "Degree Level" `<select>` on Issue / Revoke / Verify / Re-issuance | Hash composition via `composeDegreeType` in `main.ts` |
+| `MAJORS_BY_DEPT` | Cascading "Department" + "Major" — picking a department filters the Major datalist | All four forms above. `DEPARTMENTS` is auto-derived from this object's keys, so the dropdown and the filter cannot drift. |
+| `MOCK_STUDENTS` | Verifier search results (Phase 3b — planned) | Union'd with localStorage signup profiles when searching by school + name |
+| `MOCK_ISSUERS` | (currently unused — kept for future verifier-side display) | — |
+
+### Adding a school
+
+```ts
+export const MOCK_SCHOOLS: readonly string[] = [
+  "MIT",
+  "ETHZ",
+  "Stanford",
+  "NUS",
+  "Caltech",          // ← add here
+];
+```
+
+Schools are free-form strings; they're stored in `localStorage` as part of the student profile and are not hashed on chain.
+
+### Adding a degree level
+
+```ts
+export const DEGREE_LEVELS: readonly string[] = [
+  "Bachelor",
+  "Master",
+  "PhD",
+  "Associate",        // ← add here
+];
+```
+
+**Important:** the degree level is part of the credential hash. Renaming `"Bachelor"` → `"BSc"` breaks lookups for any credential already issued under the old name, because the on-chain hash is `keccak256(holder + "BSc|<major>|<dept>|<id>" + gradMonth)` and the old hash used `"Bachelor"`. Add new values freely; rename only before any credentials have been issued with the old label.
+
+### Adding a department or majors
+
+Departments are the keys of `MAJORS_BY_DEPT`; adding a key automatically adds it to the Department dropdown. Each value is the list of majors offered in that department — picking the department in the form filters the Major autocomplete to only those entries.
+
+```ts
+export const MAJORS_BY_DEPT: Record<string, readonly string[]> = {
+  // …existing entries…
+  "Engineering": [
+    "Computer Science",
+    "Electrical Engineering",
+    "Quantum Engineering",   // ← add a new major to an existing department
+  ],
+  "Architecture & Design": [  // ← add a brand-new department
+    "Architecture",
+    "Industrial Design",
+    "Urban Planning",
+  ],
+};
+```
+
+Same hash-stability rule as degree levels: rename only before issuing, since the major + dept names go into the on-chain hash.
+
+### Pre-seeding test students (for Verifier search)
+
+```ts
+export const MOCK_STUDENTS: MockStudent[] = [
+  { name: "Alice Chen",   walletAddress: "0xabc…123", school: "MIT" },
+  { name: "Bob Tanaka",   walletAddress: "0xdef…456", school: "NUS" },
+];
+```
+
+Wallet address comparison is case-insensitive. These show up in addition to any self-signed students that have created profiles via the Create Account flow.
+
+### Verify your edits
+
+```bash
+cd frontend
+npx tsc --noEmit          # type-check
+npm run dev               # reload the browser; forms pick up the new lists immediately
+```
+
+---
+
 ## Interact with Deployed Contracts
 
 ### Via Etherscan UI
 
 Both contracts are verified. Navigate to their Sepolia Etherscan pages and use "Write Contract" (connect MetaMask) or "Read Contract" (no wallet needed).
 
-- RegistryContract: https://sepolia.etherscan.io/address/0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D
-- CredentialContract: https://sepolia.etherscan.io/address/0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c
+- RegistryContract: https://sepolia.etherscan.io/address/0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e
+- CredentialContract: https://sepolia.etherscan.io/address/0x7d1daB1874685d0e677c7927E424E1e37F89d644
 
 ### Via Hardhat Console
 
@@ -402,7 +491,7 @@ Both contracts are verified. Navigate to their Sepolia Etherscan pages and use "
 ```ts
 // In the Hardhat console (TypeScript):
 const Registry = await ethers.getContractFactory("RegistryContract");
-const registry = Registry.attach("0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D");
+const registry = Registry.attach("0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e");
 
 const [signer] = await ethers.getSigners();
 console.log("Owner:", await registry.owner());
@@ -421,11 +510,11 @@ async function main() {
 
   const registry = await ethers.getContractAt(
     "RegistryContract",
-    "0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D"
+    "0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e"
   );
   const credential = await ethers.getContractAt(
     "CredentialContract",
-    "0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c"
+    "0x7d1daB1874685d0e677c7927E424E1e37F89d644"
   );
 
   // Register an issuer

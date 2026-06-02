@@ -144,21 +144,31 @@
     .signup-form {
       text-align: left; max-width: 340px; margin: 0 auto 18px;
     }
+    .signup-form textarea {
+      width: 100%; resize: vertical; box-sizing: border-box;
+    }
+    .role-toggle {
+      display: flex; gap: 18px; justify-content: center; margin: 0 auto 18px;
+      font-size: 0.85rem;
+    }
+    .role-toggle label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
     /* File input */
     input[type="file"] {
       padding: 7px 10px; cursor: pointer; font-size: 0.79rem;
     }
-    input[type="date"] {
+    input[type="date"], input[type="month"] {
       color-scheme: dark;
       cursor: pointer;
     }
-    input[type="date"]::-webkit-calendar-picker-indicator {
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="month"]::-webkit-calendar-picker-indicator {
       filter: invert(0.7);
       cursor: pointer;
       opacity: 0.7;
     }
-    input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    input[type="date"]::-webkit-calendar-picker-indicator:hover,
+    input[type="month"]::-webkit-calendar-picker-indicator:hover {
       opacity: 1;
     }
     input[type="file"]::file-selector-button {
@@ -250,6 +260,7 @@
     }
     .dash-badge.ok   { background: rgba(0,212,170,0.14); color: var(--success-b); border: 1px solid rgba(0,212,170,0.25); }
     .dash-badge.warn { background: rgba(255,96,96,0.14);  color: var(--error-b);   border: 1px solid rgba(255,96,96,0.25); }
+    .dash-badge.pending { background: rgba(255,191,0,0.14); color: #ffbf00; border: 1px solid rgba(255,191,0,0.3); }
 
     .dash-loading {
       color: #606080; font-size: 0.75rem; font-style: italic;
@@ -294,6 +305,151 @@
     .hero.error    { border-color: rgba(255,96,96,0.4); }
     .hero.error h2 { color: var(--error-b); }
 
+    /* ─── Phase 3: Student credential cards ─── */
+    .cred-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      padding: 16px 18px;
+      margin-top: 14px;
+    }
+    .cred-card:first-child { margin-top: 0; }
+    .cred-card.revoked { border-color: rgba(255,96,96,0.35); }
+    .cred-school-group { margin-top: 26px; }
+    .cred-school-group:first-child { margin-top: 0; }
+    .cred-school-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin: 0 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+      font-size: 1rem;
+    }
+    .cred-school-head .cred-school-addr {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .cred-title {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px; margin-bottom: 8px;
+    }
+    .cred-title h4 {
+      font-size: 1rem; font-weight: 700; color: var(--text); line-height: 1.3;
+    }
+    .cred-subtitle { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+    .cred-meta {
+      display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px;
+      font-size: 0.78rem; margin-top: 10px;
+    }
+    .cred-meta .k { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; font-size: 0.7rem; padding-top: 2px; }
+    .cred-meta .v { color: var(--text); word-break: break-all; }
+    .cred-hash { font-family: 'Courier New', monospace; font-size: 0.7rem; color: #c0c0e0; }
+
+    .cred-actions {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      margin-top: 14px; padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .cred-actions button {
+      flex: 1; min-width: 110px; padding: 8px 12px; font-size: 0.78rem;
+    }
+    .btn-mail { background: #4a5a8a; color: #fff; }
+
+    .cred-grant-form {
+      display: none; gap: 8px; align-items: center;
+      margin-top: 10px; padding: 10px; border-radius: 8px;
+      background: rgba(0,191,165,0.05); border: 1px solid rgba(0,191,165,0.2);
+    }
+    .cred-grant-form.show { display: flex; flex-wrap: wrap; }
+    .cred-grant-form input {
+      flex: 1; min-width: 200px; font-size: 0.78rem;
+    }
+    .cred-grant-form button {
+      padding: 8px 12px; font-size: 0.76rem; min-width: 90px;
+    }
+
+    /* ─── Phase 5: Inline label edit row ─── */
+    .label-edit {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      margin-top: 8px; padding: 10px;
+      border-radius: 8px;
+      background: rgba(120,140,200,0.06);
+      border: 1px solid rgba(120,140,200,0.2);
+    }
+    .label-edit input {
+      flex: 1; min-width: 180px; font-size: 0.78rem;
+    }
+    .label-edit button {
+      padding: 6px 12px; font-size: 0.74rem; min-width: 70px;
+    }
+    .btn-label-edit {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--muted); font-size: 0.85rem; padding: 0 4px;
+    }
+    .btn-label-edit:hover { color: var(--accent2); }
+
+    /* ─── Phase 6: Reissue modal ─── */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: none; align-items: center; justify-content: center;
+      z-index: 999;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal-content {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px 28px;
+      width: min(560px, 92vw);
+      max-height: 88vh;
+      overflow-y: auto;
+    }
+    .modal-content h3 { margin-bottom: 4px; }
+    .modal-content .modal-sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 16px; }
+    .modal-actions {
+      display: flex; gap: 10px; margin-top: 18px;
+      padding-top: 14px; border-top: 1px solid var(--border);
+    }
+    .modal-actions button { flex: 1; }
+
+    /* ─── Phase 6: Pending reissue request cards (issuer view) ─── */
+    .reissue-req-card {
+      border: 1px solid rgba(255,191,0,0.3);
+      background: rgba(255,191,0,0.04);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 12px;
+    }
+    .reissue-req-card:first-child { margin-top: 0; }
+    .reissue-req-card .rr-head {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 8px;
+    }
+    .reissue-req-card .rr-fields {
+      display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px;
+      font-size: 0.78rem; margin: 8px 0;
+    }
+    .reissue-req-card .rr-fields .k { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.68rem; }
+    .reissue-req-card .rr-reason {
+      font-size: 0.82rem; padding: 8px 10px;
+      background: rgba(0,0,0,0.2); border-radius: 6px; margin: 8px 0;
+    }
+    .reissue-req-card .rr-actions {
+      display: flex; gap: 8px; margin-top: 10px;
+    }
+    .reissue-req-card .rr-actions button {
+      flex: 1; padding: 8px 12px; font-size: 0.78rem;
+    }
+
+    .empty-state {
+      text-align: center; padding: 40px 20px;
+      color: var(--muted); font-size: 0.88rem;
+    }
+
     /* ─── Phase 1: Header role badge + logout ─── */
     #currentRoleBadge {
       font-size: 0.74rem; font-weight: 700;
@@ -324,9 +480,9 @@
     <h1>DACS — Decentralized Academic Credential System</h1>
     <p>
       Sepolia &nbsp;·&nbsp;
-      Registry: <a href="https://sepolia.etherscan.io/address/0xc65AeAb4dB37A7cB1025cC9cC2c6231de7c65A9D" target="_blank">0xc65A…9D</a>
+      Registry: <a href="https://sepolia.etherscan.io/address/0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e" target="_blank">0xC4D2…33e</a>
       &nbsp;·&nbsp;
-      Credential: <a href="https://sepolia.etherscan.io/address/0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c" target="_blank">0x469B…2c</a>
+      Credential: <a href="https://sepolia.etherscan.io/address/0x7d1daB1874685d0e677c7927E424E1e37F89d644" target="_blank">0x7d1d…644</a>
     </p>
   </div>
   <div class="connect-area">
@@ -355,19 +511,117 @@
   </div>
 </section>
 
-<!-- ═══════════════════════════ VIEW: Create account (Student signup) -->
+<!-- ═══════════════════════════ VIEW: Create account (Student signup / School application) -->
 <section id="viewCreateAccount" class="view" style="display:none">
-  <div class="hero">
-    <h2>Create student account</h2>
-    <p>This wallet isn't tied to any role yet. Sign up as a student to access your dashboard.</p>
-    <div class="signup-form">
+
+  <!-- Default: choose a role and fill the matching form -->
+  <div id="signupFormWrap" class="hero">
+    <h2>Create your account</h2>
+    <p>This wallet isn't tied to any role yet. Choose how you want to join DACS.</p>
+
+    <div class="role-toggle">
+      <label><input type="radio" name="signupRole" value="student" checked onchange="toggleSignupRole()" /> I'm a student</label>
+      <label><input type="radio" name="signupRole" value="school" onchange="toggleSignupRole()" /> I represent a school</label>
+    </div>
+
+    <!-- Student sub-form -->
+    <div id="signupStudentForm" class="signup-form">
       <label>Name</label>
       <input id="signupName" placeholder="Your full name" />
       <label>School</label>
-      <select id="signupSchool"></select>
+      <input id="signupSchool" placeholder="Your school name" />
+      <label>Contact email (optional)</label>
+      <input id="signupContact" type="email" placeholder="you@example.edu" />
+      <p style="font-size:0.75rem; color: var(--muted); margin:6px 0 0;">
+        Your application is recorded on-chain. An admin reviews it and approves or
+        rejects before you can access your dashboard.
+      </p>
     </div>
-    <button onclick="submitCreateAccount(this)">Create Account</button>
+
+    <!-- School application sub-form -->
+    <div id="signupSchoolForm" class="signup-form" style="display:none">
+      <label>Institution name</label>
+      <input id="applySchoolName" placeholder="e.g., University of Example" />
+      <label>Contact email</label>
+      <input id="applyContact" type="email" placeholder="registrar@example.edu" />
+      <label>Note (optional)</label>
+      <textarea id="applyNote" rows="2" placeholder="Anything that helps the registry owner verify you"></textarea>
+      <label>Supporting document (PDF)</label>
+      <input type="file" id="applyDoc" accept=".pdf" />
+      <p style="font-size:0.75rem; color: var(--muted); margin:6px 0 0;">
+        Your application is recorded on-chain; the document is pinned to IPFS. The
+        registry owner reviews it and approves or rejects.
+      </p>
+    </div>
+
+    <button onclick="submitCreateAccount(this)">Submit</button>
     <div id="signupResult" class="result"></div>
+  </div>
+
+  <!-- Application pending review -->
+  <div id="signupPendingWrap" class="hero" style="display:none">
+    <h2>Application pending review ⏳</h2>
+    <p>Your application has been recorded on-chain. An admin will review it and
+       approve or reject. Reconnect later to check the status.</p>
+    <button onclick="logout()">Disconnect</button>
+  </div>
+
+  <!-- Application rejected -->
+  <div id="signupRejectedWrap" class="hero error" style="display:none">
+    <h2>Application rejected</h2>
+    <p id="signupRejectedReason">Your application was not approved.</p>
+    <button onclick="reapply()">Re-apply</button>
+    <button onclick="logout()">Disconnect</button>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ VIEW: Admin -->
+<section id="viewAdmin" class="view" style="display:none">
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-icon issuer">🛡</div>
+        <div>
+          <h2>Admin Dashboard</h2>
+          <p>Registry owner — validate accounts and track submissions</p>
+        </div>
+      </div>
+      <div class="panel-body">
+
+        <!-- Pending School Applications -->
+        <div class="section">
+          <h3>Pending School Applications</h3>
+          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+            Self-serve applications submitted on-chain. Approve to register the
+            wallet as an issuer, or reject with a reason.
+          </p>
+          <div id="pendingSchoolAppsList" class="empty-state">No pending applications.</div>
+        </div>
+
+        <!-- Pending Student Applications -->
+        <div class="section">
+          <h3>Pending Student Applications</h3>
+          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+            Self-serve applications submitted on-chain. Approve to register the
+            wallet as a student, or reject with a reason.
+          </p>
+          <div id="pendingStudentAppsList" class="empty-state">No pending applications.</div>
+        </div>
+
+        <!-- Manual issuer registration -->
+        <div class="section">
+          <h3>Register Issuer manually</h3>
+          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+            Directly register an issuer wallet without an on-chain application.
+          </p>
+          <label>Issuer Address</label>
+          <input id="regIssuerAddr" placeholder="0x…" />
+          <button class="btn-issuer" onclick="doRegisterIssuer(this)">Register Issuer</button>
+          <div id="regIssuerResult" class="result"></div>
+        </div>
+
+      </div>
+    </div>
   </div>
 </section>
 
@@ -384,15 +638,6 @@
         </div>
       </div>
       <div class="panel-body">
-
-        <!-- Register Issuer (owner-only — gated in Phase 2) -->
-        <div id="ownerOnlySection" class="section" style="display:none">
-          <h3>Register Issuer <span class="owner-note">(owner only)</span></h3>
-          <label>Issuer Address</label>
-          <input id="regIssuerAddr" placeholder="0x…" />
-          <button class="btn-issuer" onclick="doRegisterIssuer(this)">Register Issuer</button>
-          <div id="regIssuerResult" class="result"></div>
-        </div>
 
         <!-- Issue Credential -->
         <div class="section">
@@ -412,8 +657,8 @@
             placeholder="Select department first…"
             disabled
             oninput="updateCredHash('issue')" />
-          <label>Graduation Date</label>
-          <input id="issueGradDate" type="date"
+          <label>Graduation Month</label>
+          <input id="issueGradDate" type="month"
             oninput="updateCredHash('issue')" />
           <div id="issueHashPreview" class="hash-preview">
             <div class="hash-preview-label">solidityPackedKeccak256 →</div>
@@ -423,6 +668,16 @@
           <input type="file" id="issuePdf" accept=".pdf" />
           <button class="btn-issuer" onclick="doIssueCredential(this)">Issue Credential + Upload PDF</button>
           <div id="issueResult" class="result"></div>
+        </div>
+
+        <!-- Pending Reissuance Requests (Phase 6) -->
+        <div class="section">
+          <h3>Pending Reissuance Requests</h3>
+          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+            Requests addressed to this issuer wallet. Approve to revoke the old
+            credential and issue a new one with the updated fields.
+          </p>
+          <div id="pendingReissuesList" class="empty-state">No pending requests.</div>
         </div>
 
         <!-- Revoke Credential -->
@@ -443,8 +698,8 @@
             placeholder="Select department first…"
             disabled
             oninput="updateCredHash('revoke')" />
-          <label>Graduation Date</label>
-          <input id="revokeGradDate" type="date"
+          <label>Graduation Month</label>
+          <input id="revokeGradDate" type="month"
             oninput="updateCredHash('revoke')" />
           <div id="revokeHashPreview" class="hash-preview">
             <div class="hash-preview-label">solidityPackedKeccak256 →</div>
@@ -460,11 +715,23 @@
   </div>
 </section>
 
-<!-- ═══════════════════════════ VIEW: Student (Phase 3 fills cards) -->
+<!-- ═══════════════════════════ VIEW: Student -->
 <section id="viewStudent" class="view" style="display:none">
-  <div class="hero">
-    <h2>Student Dashboard</h2>
-    <p>Your credential cards land here in Phase 3.</p>
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-icon holder">🎓</div>
+        <div>
+          <h2 id="studentGreeting">Student Dashboard</h2>
+          <p id="studentSubtitle">Your credentials</p>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="studentCreds">
+          <div class="dash-loading" style="padding: 24px 0;">Loading credentials…</div>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -499,8 +766,8 @@
             placeholder="Select department first…"
             disabled
             oninput="updateCredHash('verify')" />
-          <label>Graduation Date</label>
-          <input id="verifyGradDate" type="date"
+          <label>Graduation Month</label>
+          <input id="verifyGradDate" type="month"
             oninput="updateCredHash('verify')" />
           <div id="verifyHashPreview" class="hash-preview">
             <div class="hash-preview-label">solidityPackedKeccak256 →</div>
@@ -566,6 +833,47 @@
 
   </div>
 </section>
+
+<!-- ═══════════════════════════ Reissuance Modal (Phase 6) -->
+<div id="reissueModal" class="modal-backdrop">
+  <div class="modal-content">
+    <h3>Request Re-issuance</h3>
+    <p class="modal-sub">
+      Edit the degree fields and explain why. The issuer will see this in their
+      dashboard on their next login and can approve in one click.
+    </p>
+
+    <input type="hidden" id="reissueCredHash" />
+    <input type="hidden" id="reissueIssuerAddr" />
+    <input type="hidden" id="reissuePdfCid" />
+
+    <label>Reason for Re-issuance</label>
+    <textarea id="reissueReason" rows="3" placeholder="e.g., Major name corrected from CS to Computer Science"></textarea>
+
+    <label>Student ID</label>
+    <input id="reissueStudentId" placeholder="e.g., 20240417" />
+
+    <label>Degree Level</label>
+    <select id="reissueLevel"></select>
+
+    <label>Department</label>
+    <select id="reissueDept" onchange="refreshMajors('reissue')"></select>
+
+    <label>Major</label>
+    <input id="reissueMajor" list="reissueMajorsList" placeholder="Select department first…" disabled />
+
+    <label>Graduation Month</label>
+    <input id="reissueGradDate" type="month" />
+
+    <div id="reissueModalResult" class="result"></div>
+
+    <div class="modal-actions">
+      <button class="btn-issuer" onclick="submitReissueRequest(this)">Submit Request</button>
+      <button class="btn-mail"   onclick="closeReissueModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+<datalist id="reissueMajorsList"></datalist>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

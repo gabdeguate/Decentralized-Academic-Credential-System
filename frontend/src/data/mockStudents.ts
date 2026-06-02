@@ -17,12 +17,9 @@ export interface MockIssuer {
   email:         string; // used by Phase 3 "Request Re-issuance" mailto button
 }
 
-export const MOCK_SCHOOLS: readonly string[] = [
-  "MIT",
-  "ETHZ",
-  "Stanford",
-  "NUS",
-];
+// Students type their school name freely on signup (free-text input). Kept as
+// an empty list so no demo schools are preset; add names here to offer presets.
+export const MOCK_SCHOOLS: readonly string[] = [];
 
 export const DEGREE_LEVELS: readonly string[] = [
   "Bachelor",
@@ -50,7 +47,6 @@ export const MAJORS_BY_DEPT: Record<string, readonly string[]> = {
     "Physics",
     "Chemistry",
     "Biology",
-    "Neuroscience",
     "Environmental Science",
   ],
   "Business": [
