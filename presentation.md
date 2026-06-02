@@ -68,12 +68,21 @@ us. We wrote two of them.
 ### 3a. RegistryContract — the "who is allowed" list
 
 This is the gatekeeper. It keeps two lists: **approved schools** and **approved
-students**. Only the **Admin** can add or remove names from these lists.
+students**, and it also remembers **pending applications** that are waiting for a
+decision.
 
-Technique: the admin-only power is enforced by a standard, audited library called
-**OpenZeppelin Ownable**. Every sensitive function is marked `onlyOwner`, so if
-anyone other than the admin tries to call it, the blockchain rejects it
-automatically.
+Who can do what:
+
+- **Admins** approve or reject schools and students, and add or remove them from the
+  approved lists.
+- The system supports **more than one admin**. There is always a head admin (the
+  contract's *owner*), and the owner can appoint or remove additional admins — handy
+  when a registrar's office has several staff sharing the workload.
+- Only the **owner** can change the admin list itself; ordinary admins cannot.
+
+Technique: these powers are enforced in code with an `onlyAdmin` check, built on the
+standard, audited **OpenZeppelin Ownable** library. If anyone without the right role
+calls a protected function, the blockchain rejects it automatically.
 
 ### 3b. CredentialContract — the diploma ledger
 
@@ -156,6 +165,10 @@ students must be **approved by the Admin** before they can participate.
 4. The applicant sees their status next time they log in — approved, pending, or
    rejected-with-reason (and they can re-apply).
 
+The admin dashboard also has a **Manage Admins** panel (shown only to the owner) for
+appointing or removing other admins, so approval duties can be shared across a team
+instead of resting with one person.
+
 Technique: applications and decisions are all recorded as on-chain events and
 status flags (`Pending`, `Rejected`, or approved). Because rejection reasons are
 stored on-chain, the applicant always sees an honest explanation.
@@ -207,6 +220,11 @@ order and returns the first problem it finds:
 
 Only if all four pass does it return "valid."
 
+A logged-in employer gets their own **Verifier dashboard**: they re-enter the diploma
+details the student gave them, the page rebuilds the same fingerprint, and they get an
+instant ✅ or ❌. (For a quick check without logging in at all, see the public lookup in
+section 10.)
+
 > **In one line:** the student is in charge of their own privacy — verification is
 > permission-based, not open to the world.
 
@@ -223,6 +241,11 @@ Nice touch: schools are shown by their **readable name** (pulled from their orig
 application) instead of a cryptic wallet address. If a school was added directly by
 the admin and has no application on file, the dashboard gracefully falls back to
 showing its short address.
+
+Each diploma card also lets the student **download the PDF**, **manage who can see it**,
+and **request a re-issuance** — for example if a name or major was misspelled. The
+request appears in the issuing school's dashboard, where the school can correct the
+details and issue a fresh diploma in one click.
 
 > **In one line:** one student, many schools, one tidy view — grouped and labeled in
 > plain English.
@@ -272,9 +295,9 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 
 ## 12. Quality and safety practices
 
-- **Automated tests:** the contracts ship with ~80+ automated tests covering every
-  rule — who can do what, what happens on bad input, and a full
-  issue → verify → revoke lifecycle. They all pass.
+- **Automated tests:** the contracts ship with **104 automated tests** covering every
+  rule — who can do what (admins, schools, students), what happens on bad input, and a
+  full apply → approve → issue → verify → revoke lifecycle. They all pass.
 - **Public verification:** both contracts are **verified on Etherscan**, meaning the
   exact source code is published and anyone can read or audit it.
 - **Trusted building blocks:** we use **OpenZeppelin**, the industry-standard,
@@ -296,6 +319,7 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 | **IPFS / CID** | Decentralized file storage; the CID is the file's tamper-proof address |
 | **Pinata** | A service that keeps our IPFS files online |
 | **Issuer / Holder / Verifier** | School / Student / Employer |
-| **onlyOwner** | A rule that lets only the admin run a function |
+| **Admin / Owner** | Admins approve schools & students; the owner is the head admin who can appoint other admins |
+| **onlyAdmin / onlyOwner** | A rule that lets only an admin (or only the owner) run a function |
 | **Revoke** | Permanently mark a diploma (or an access grant) as no longer valid |
 | **Sepolia** | Ethereum's free practice network we deployed on |
