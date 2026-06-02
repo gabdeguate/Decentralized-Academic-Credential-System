@@ -16,6 +16,7 @@ import {
   CREDENTIAL_ABI,
 } from "./config.js";
 import { uploadToPinata } from "./utils/ipfs.js";
+import { MOCK_SCHOOLS, MAJORS_BY_DEPT, DEPARTMENTS, DEGREE_LEVELS } from "./data/mockStudents.js";
 
 // ─── Global ethereum type ─────────────────────────────────────────────────────
 declare global {
@@ -34,6 +35,214 @@ declare global {
     doRevokeAccess:     (btn: HTMLButtonElement) => Promise<void>;
     doDownloadDiploma:  (btn: HTMLButtonElement) => Promise<void>;
     doVerify:           (btn: HTMLButtonElement) => Promise<void>;
+    logout:             () => void;
+    submitCreateAccount:(btn: HTMLButtonElement) => Promise<void>;
+    refreshMajors:      (prefix: string) => void;
+  }
+}
+
+// ─── View-state machine (Phase 1) ─────────────────────────────────────────────
+type UserRole = "none" | "issuer" | "student" | "verifier";
+const VIEW_IDS = [
+  "viewConnect",
+  "viewMultiRoleError",
+  "viewCreateAccount",
+  "viewIssuer",
+  "viewStudent",
+  "viewVerifier",
+] as const;
+type ViewId = typeof VIEW_IDS[number];
+
+let userRole:      UserRole = "none";
+let connectedAddr: string   = "";
+
+function showView(viewId: ViewId): void {
+  for (const id of VIEW_IDS) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = id === viewId ? "block" : "none";
+  }
+}
+
+function setRoleBadge(role: UserRole, addr: string): void {
+  const el = document.getElementById("currentRoleBadge");
+  if (!el) return;
+  if (role === "none" || !addr) {
+    el.style.display = "none";
+    el.textContent   = "";
+    return;
+  }
+  const short = `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  el.textContent   = `Role: ${role} · ${short}`;
+  el.style.display = "inline-flex";
+}
+
+function logout(): void {
+  // Profile persists in localStorage so the wallet re-routes to the same dashboard
+  // on reconnect. To "delete account" the user must clear localStorage manually
+  // or use a different wallet.
+  connectedAddr = "";
+  userRole      = "none";
+  location.reload();
+}
+
+function profileKey(addr: string): string {
+  return `dacs:profile:${addr.toLowerCase()}`;
+}
+
+async function detectAndRoute(addr: string): Promise<void> {
+  if (!registry || !credential) {
+    showView("viewConnect");
+    return;
+  }
+
+  // Parallel reads — each guarded so a single RPC failure can't block routing.
+  const isIssuerP = (registry   as Contract).isRegisteredIssuer(addr)
+                      .catch((e: unknown) => { console.warn("isRegisteredIssuer:", errMsg(e)); return false; });
+  const ownerP    = (registry   as Contract).owner()
+                      .catch((e: unknown) => { console.warn("owner:", errMsg(e)); return ""; });
+  const issuedP   = (credential as Contract).queryFilter(
+                      (credential as Contract).filters.CredentialIssued(null, null, addr), 0, "latest")
+                      .catch((e: unknown) => { console.warn("CredentialIssued query:", errMsg(e)); return []; });
+  const grantedP  = (credential as Contract).queryFilter(
+                      (credential as Contract).filters.VerifierAccessGranted(null, null, addr), 0, "latest")
+                      .catch((e: unknown) => { console.warn("VerifierAccessGranted query:", errMsg(e)); return []; });
+
+  const [isIssuer, ownerAddr, issuedLogs, grantedLogs] = await Promise.all([
+    isIssuerP, ownerP, issuedP, grantedP,
+  ]);
+
+  const isOwner = typeof ownerAddr === "string" && ownerAddr.length > 0
+                  && ownerAddr.toLowerCase() === addr.toLowerCase();
+  const profile = localStorage.getItem(profileKey(addr));
+
+  const issuerMatch   = isOwner || isIssuer === true;
+  const studentMatch  = (issuedLogs as unknown[]).length > 0 || profile !== null;
+  const verifierMatch = (grantedLogs as unknown[]).length > 0;
+
+  // Owner is allowed to also be issuer-registered (one role: issuer). Multi-role
+  // only fires when the wallet matches across DIFFERENT role categories.
+  const matchedRoles: UserRole[] = [];
+  if (issuerMatch)   matchedRoles.push("issuer");
+  if (studentMatch)  matchedRoles.push("student");
+  if (verifierMatch) matchedRoles.push("verifier");
+
+  if (matchedRoles.length >= 2) {
+    userRole = "none";
+    setRoleBadge("none", "");
+    showView("viewMultiRoleError");
+    return;
+  }
+
+  if (matchedRoles.length === 0) {
+    userRole = "none";
+    setRoleBadge("none", "");
+    showView("viewCreateAccount");
+    return;
+  }
+
+  const role = matchedRoles[0];
+  userRole = role;
+  setRoleBadge(role, addr);
+
+  if (role === "issuer") {
+    const ownerSection = document.getElementById("ownerOnlySection");
+    if (ownerSection) ownerSection.style.display = isOwner ? "block" : "none";
+    showView("viewIssuer");
+  } else if (role === "student") {
+    showView("viewStudent");
+  } else {
+    showView("viewVerifier");
+  }
+}
+
+function populateSchoolSelect(): void {
+  const sel = document.getElementById("signupSchool") as HTMLSelectElement | null;
+  if (!sel || sel.options.length > 0) return;
+  for (const school of MOCK_SCHOOLS) {
+    const opt = document.createElement("option");
+    opt.value = school;
+    opt.textContent = school;
+    sel.appendChild(opt);
+  }
+}
+
+function fillSelect(id: string, options: readonly string[], placeholder: string): void {
+  const sel = document.getElementById(id) as HTMLSelectElement | null;
+  if (!sel || sel.options.length > 0) return;
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = placeholder;
+  ph.disabled = true;
+  ph.selected = true;
+  sel.appendChild(ph);
+  for (const v of options) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    sel.appendChild(opt);
+  }
+}
+
+// Refill that form's <datalist> with the majors offered in its current Department.
+// Also clears the Major input + enables/disables it based on whether a dept is set.
+function refreshMajors(prefix: string): void {
+  const deptSel    = document.getElementById(`${prefix}Dept`)  as HTMLSelectElement | null;
+  const majorInput = document.getElementById(`${prefix}Major`) as HTMLInputElement  | null;
+  const dl         = document.getElementById(`${prefix}MajorsList`) as HTMLDataListElement | null;
+  if (!deptSel || !majorInput || !dl) return;
+
+  const dept    = deptSel.value;
+  const options = dept ? MAJORS_BY_DEPT[dept] ?? [] : [];
+
+  // Reset the datalist
+  while (dl.firstChild) dl.removeChild(dl.firstChild);
+  for (const m of options) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    dl.appendChild(opt);
+  }
+
+  // Stale major value? Drop it.
+  if (majorInput.value && !options.includes(majorInput.value)) {
+    majorInput.value = "";
+  }
+
+  if (dept) {
+    majorInput.disabled    = false;
+    majorInput.placeholder = `Start typing… (${options.length} majors in ${dept})`;
+  } else {
+    majorInput.disabled    = true;
+    majorInput.placeholder = "Select department first…";
+  }
+}
+
+function populateDegreeFields(): void {
+  for (const prefix of ["issue", "revoke", "verify"]) {
+    fillSelect(`${prefix}Level`, DEGREE_LEVELS, "Select level…");
+    fillSelect(`${prefix}Dept`,  DEPARTMENTS,   "Select department…");
+    refreshMajors(prefix); // initialize datalist (empty until dept chosen)
+  }
+}
+
+async function submitCreateAccount(btn: HTMLButtonElement): Promise<void> {
+  setLoading(btn, true);
+  try {
+    if (!connectedAddr) throw new Error("Wallet not connected.");
+    const name   = getVal("signupName");
+    const school = (document.getElementById("signupSchool") as HTMLSelectElement | null)?.value ?? "";
+    if (!name)   throw new Error("Enter your name.");
+    if (!school) throw new Error("Select a school.");
+
+    localStorage.setItem(
+      profileKey(connectedAddr),
+      JSON.stringify({ name, school, createdAt: Date.now() }),
+    );
+    setResult("signupResult", "success", `✅ Account created. Routing…`);
+    await detectAndRoute(connectedAddr);
+  } catch (e) {
+    setResult("signupResult", "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
   }
 }
 
@@ -75,14 +284,18 @@ async function connectWallet(): Promise<void> {
     const addr  = await (signer as Awaited<ReturnType<BrowserProvider["getSigner"]>>).getAddress();
     const short = `${addr.slice(0, 6)}…${addr.slice(-4)}`;
     setWalletStatus(`${short} · Sepolia`, true);
+    connectedAddr = addr;
 
     const btn = document.getElementById("connectBtn") as HTMLButtonElement;
     btn.textContent = "Connected ✓";
     btn.disabled    = true;
     (document.getElementById("switchBtn") as HTMLElement).style.display = "inline-flex";
+    (document.getElementById("logoutBtn") as HTMLElement).style.display = "inline-flex";
 
     window.ethereum.on("accountsChanged", () => location.reload());
     window.ethereum.on("chainChanged",    () => location.reload());
+
+    await detectAndRoute(addr);
   } catch (e) {
     setWalletStatus(`❌ ${errMsg(e)}`, false);
   }
@@ -112,19 +325,68 @@ function computeCredentialHash(
   );
 }
 
+// ─── Degree-type composition ─────────────────────────────────────────────────
+// All rich fields (level, major, department, degree name, student ID) are
+// packed into the single `degreeType` string so the on-chain hash stays
+// `solidityPackedKeccak256(["address","string","string"], [...])` (contract API
+// unchanged). Pipe delimiter is forbidden in any of the field values.
+function composeDegreeType(prefix: string): { ok: boolean; composed: string; missing: string[] } {
+  const level     = getVal(`${prefix}Level`);
+  const major     = getVal(`${prefix}Major`);
+  const dept      = getVal(`${prefix}Dept`);
+  const studentId = getVal(`${prefix}StudentId`);
+
+  const missing: string[] = [];
+  if (!level)     missing.push("degree level");
+  if (!dept)      missing.push("department");
+  if (!major)     missing.push("major");
+  if (!studentId) missing.push("student ID");
+  if (missing.length > 0) return { ok: false, composed: "", missing };
+
+  // Major must belong to the chosen department — guards against stale autocomplete
+  // selections where dept was changed after major was filled.
+  const allowed = MAJORS_BY_DEPT[dept];
+  if (!allowed || !allowed.includes(major)) {
+    throw new Error(`Major "${major}" is not offered in department "${dept}".`);
+  }
+
+  // Defensive: reject pipe character — would collide with the delimiter and
+  // produce a different hash than what the verifier computes.
+  for (const [k, v] of Object.entries({ level, major, dept, studentId })) {
+    if (v.includes("|")) {
+      throw new Error(`Field "${k}" cannot contain the "|" character.`);
+    }
+  }
+
+  return {
+    ok: true,
+    composed: `${level}|${major}|${dept}|${studentId}`,
+    missing: [],
+  };
+}
+
 // ─── Live hash previews ───────────────────────────────────────────────────────
 function updateCredHash(prefix: string): void {
   const studentAddr = getVal(`${prefix}StudentAddr`);
-  const degreeType  = getVal(`${prefix}DegreeType`);
   const gradDate    = getVal(`${prefix}GradDate`);
 
   const preview = document.getElementById(`${prefix}HashPreview`);
   const value   = document.getElementById(`${prefix}HashValue`);
   if (!preview || !value) return;
 
-  if (studentAddr && degreeType && gradDate) {
+  let composed = "";
+  try {
+    const r = composeDegreeType(prefix);
+    if (!r.ok) { preview.style.display = "none"; return; }
+    composed = r.composed;
+  } catch {
+    preview.style.display = "none";
+    return;
+  }
+
+  if (studentAddr && composed && gradDate) {
     try {
-      value.textContent     = computeCredentialHash(studentAddr, degreeType, gradDate);
+      value.textContent     = computeCredentialHash(studentAddr, composed, gradDate);
       preview.style.display = "block";
     } catch {
       preview.style.display = "none";
@@ -206,13 +468,15 @@ function loading(text = "Loading…"): string {
 
 function getCredHashFromPrefix(prefix: string): string {
   const studentAddr = getVal(`${prefix}StudentAddr`);
-  const degreeType  = getVal(`${prefix}DegreeType`);
   const gradDate    = getVal(`${prefix}GradDate`);
   if (!studentAddr)            throw new Error("Enter student address.");
   if (!isAddress(studentAddr)) throw new Error(`Invalid student address: "${studentAddr}" — must be a valid 0x… Ethereum address.`);
-  if (!degreeType)             throw new Error("Enter degree type.");
-  if (!gradDate)               throw new Error("Enter graduation date.");
-  return computeCredentialHash(studentAddr, degreeType, gradDate);
+
+  const { ok, composed, missing } = composeDegreeType(prefix);
+  if (!ok) throw new Error(`Fill in all degree fields: ${missing.join(", ")}.`);
+  if (!gradDate) throw new Error("Pick a graduation date.");
+
+  return computeCredentialHash(studentAddr, composed, gradDate);
 }
 
 function formatTs(unixSec: number): string {
@@ -255,16 +519,17 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
   try {
     await ensureConnected();
     const studentAddr = getVal("issueStudentAddr");
-    const degreeType  = getVal("issueDegreeType");
     const gradDate    = getVal("issueGradDate");
     const pdfInput    = document.getElementById("issuePdf") as HTMLInputElement;
     const pdfFile     = pdfInput?.files?.[0] ?? null;
 
-    if (!studentAddr)          throw new Error("Enter student address.");
+    if (!studentAddr)            throw new Error("Enter student address.");
     if (!isAddress(studentAddr)) throw new Error(`Invalid student address: "${studentAddr}" — must be a valid 0x… Ethereum address.`);
-    if (!degreeType)           throw new Error("Enter degree type.");
-    if (!gradDate)             throw new Error("Enter graduation date.");
-    if (!pdfFile)              throw new Error("Select a diploma PDF file.");
+
+    const { ok, composed, missing } = composeDegreeType("issue");
+    if (!ok)        throw new Error(`Fill in all degree fields: ${missing.join(", ")}.`);
+    if (!gradDate)  throw new Error("Pick a graduation date.");
+    if (!pdfFile)   throw new Error("Select a diploma PDF file.");
 
     let cid: string;
     try {
@@ -276,7 +541,7 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
     const metadataURI = `ipfs://${cid}`;
     setResult("issueResult", "pending", `⛓ Submitting to Sepolia… CID: ${cid.slice(0, 12)}…`);
 
-    const credHash = computeCredentialHash(studentAddr, degreeType, gradDate);
+    const credHash = computeCredentialHash(studentAddr, composed, gradDate);
     const tx = await (credential as Contract).issueCredential(studentAddr, credHash, metadataURI);
     setResult("issueResult", "pending", `⏳ Pending… ${txLink(tx.hash)}`);
     await tx.wait();
@@ -571,3 +836,11 @@ window.doGrantAccess      = doGrantAccess;
 window.doRevokeAccess     = doRevokeAccess;
 window.doDownloadDiploma  = doDownloadDiploma;
 window.doVerify           = doVerify;
+window.logout             = logout;
+window.submitCreateAccount = submitCreateAccount;
+window.refreshMajors       = refreshMajors;
+
+// Populate signup school <select> + degree dropdowns/datalist on boot
+// (DOM is ready — script tag at end of body).
+populateSchoolSelect();
+populateDegreeFields();

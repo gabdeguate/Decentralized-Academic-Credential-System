@@ -15,6 +15,7 @@ export const PINATA_GATEWAY  = "https://gateway.pinata.cloud/ipfs/";
 export const REGISTRY_ABI = [
   "function registerIssuer(address issuer) external",
   "function isRegisteredIssuer(address issuer) external view returns (bool)",
+  "function owner() external view returns (address)",
   // Errors — required for ethers to decode revert reasons
   "error ZeroAddress()",
   "error AlreadyRegistered(address issuer)",
@@ -32,6 +33,8 @@ export const CREDENTIAL_ABI = [
   // Events — required for contract.filters.* and queryFilter
   "event CredentialIssued(bytes32 indexed credentialHash, address indexed issuer, address indexed holder, string metadataURI)",
   "event CredentialRevoked(bytes32 indexed credentialHash, address indexed issuer)",
+  "event VerifierAccessGranted(bytes32 indexed credentialHash, address indexed holder, address indexed verifier)",
+  "event VerifierAccessRevoked(bytes32 indexed credentialHash, address indexed holder, address indexed verifier)",
   // Errors — required for ethers to decode revert reasons
   "error ZeroAddress()",
   "error NotAuthorizedIssuer()",
