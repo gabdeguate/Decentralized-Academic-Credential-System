@@ -7,6 +7,17 @@ export const CREDENTIAL_ADDRESS: string =
   (import.meta.env.VITE_CREDENTIAL_ADDRESS as string | undefined) ??
   "0x469Be3C83b7ec56d43dc7e468BcDf2815B13C52c";
 
+export const SEPOLIA_RPC_URL: string =
+  (import.meta.env.VITE_SEPOLIA_RPC_URL as string | undefined) ??
+  "https://rpc.sepolia.org";
+
+// Fallback RPC endpoints — tried in order if the primary fails.
+export const SEPOLIA_RPC_FALLBACKS: readonly string[] = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://sepolia.gateway.tenderly.co",
+  "https://1rpc.io/sepolia",
+];
+
 export const SEPOLIA_CHAIN_ID = 11155111n;
 export const ETHERSCAN_TX    = "https://sepolia.etherscan.io/tx/";
 export const PINATA_GATEWAY  = "https://gateway.pinata.cloud/ipfs/";

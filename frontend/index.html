@@ -308,6 +308,67 @@
       border: 1px solid var(--error-b);
       padding: 8px 14px; font-size: 0.82rem;
     }
+
+    /* ─── Public Lookup ─── */
+    .public-lookup-panel {
+      max-width: 720px;
+      margin: 0 auto 48px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 36px 32px;
+    }
+    .public-lookup-panel h2 {
+      font-size: 1.15rem; font-weight: 700; margin-bottom: 6px;
+    }
+    .public-lookup-panel > p {
+      color: var(--muted); font-size: 0.84rem; line-height: 1.5; margin-bottom: 18px;
+    }
+    .public-lookup-row {
+      display: flex; gap: 10px; margin-bottom: 10px;
+    }
+    .public-lookup-row input { flex: 1; }
+    .public-lookup-row button {
+      background: var(--verifier); color: #fff;
+      padding: 9px 22px; white-space: nowrap;
+    }
+    #publicLookupResult {
+      font-size: 0.82rem; min-height: 0; margin-bottom: 8px;
+    }
+
+    /* Credential cards */
+    .cred-cards { display: flex; flex-direction: column; gap: 10px; }
+    .cred-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; cursor: pointer;
+      transition: border-color 0.15s, opacity 0.15s;
+    }
+    .cred-card:hover { border-color: var(--accent); }
+    .cred-card.revoked { opacity: 0.55; }
+    .cred-card-info {
+      flex: 1; min-width: 0;
+      font-size: 0.8rem; color: var(--text);
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .cred-card-hash {
+      font-family: 'Courier New', monospace; font-size: 0.72rem;
+      color: #c0c0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .cred-card-meta { font-size: 0.74rem; color: var(--muted); }
+    .cred-card-badge {
+      flex-shrink: 0; font-size: 0.67rem; font-weight: 700;
+      padding: 3px 10px; border-radius: 4px; text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .cred-card-badge.valid   { background: rgba(0,212,170,0.14); color: var(--success-b); border: 1px solid rgba(0,212,170,0.25); }
+    .cred-card-badge.revoked { background: rgba(255,96,96,0.14);  color: var(--error-b);   border: 1px solid rgba(255,96,96,0.25); }
+    .cred-card-badge.invalid { background: rgba(255,152,0,0.14);  color: var(--verifier);  border: 1px solid rgba(255,152,0,0.25); }
+
+    .public-truncate-msg {
+      font-size: 0.76rem; color: var(--muted); text-align: center; margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -343,6 +404,59 @@
     <h2>Welcome to DACS</h2>
     <p>Connect your MetaMask wallet to access the platform. We'll route you to the right dashboard based on your wallet identity.</p>
     <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+  </div>
+
+  <!-- Public credential lookup — no wallet required -->
+  <div class="public-lookup-panel">
+    <h2>Verify a Credential</h2>
+    <p>Enter a student's wallet address to verify their credentials — no login required.</p>
+    <div class="public-lookup-row">
+      <input id="publicLookupAddr" placeholder="Student wallet address (0x…)" />
+      <button onclick="publicLookup(this)">Search</button>
+    </div>
+    <div id="publicLookupResult" class="result"></div>
+    <div id="publicCredentialList" class="cred-cards"></div>
+
+    <!-- Detail dashboard (reuses verify-dashboard styling) -->
+    <div id="publicDashboard" class="verify-dashboard" style="margin-top:14px">
+      <div id="pubDashStatus" class="dash-status">
+        <span id="pubDashIcon" class="dash-icon"></span>
+        <div>
+          <div id="pubDashLabel" class="dash-label"></div>
+          <div id="pubDashReason" class="dash-reason"></div>
+        </div>
+      </div>
+      <div class="dash-grid">
+        <div class="dash-row">
+          <span class="dash-key">Cred ID</span>
+          <span id="pubDashCredId" class="dash-val mono-val"></span>
+        </div>
+        <div class="dash-row">
+          <span class="dash-key">Holder</span>
+          <span id="pubDashHolder" class="dash-val mono-val"></span>
+        </div>
+        <div class="dash-row">
+          <span class="dash-key">Issuer</span>
+          <div class="dash-issuer-wrap">
+            <span id="pubDashIssuer" class="mono-val"></span>
+            <span id="pubDashIssuerReg" class="dash-badge"></span>
+          </div>
+        </div>
+        <div class="dash-row">
+          <span class="dash-key">Issued</span>
+          <span id="pubDashIssued" class="dash-val"></span>
+        </div>
+        <div class="dash-row">
+          <span class="dash-key">Revocation</span>
+          <span id="pubDashRevoked" class="dash-val"></span>
+        </div>
+        <div class="dash-row" id="pubDashDiplomaRow" style="display:none">
+          <span class="dash-key">Diploma</span>
+          <a id="pubDashDiplomaLink" class="dash-val dash-link"
+             href="#" target="_blank" rel="noopener"></a>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 

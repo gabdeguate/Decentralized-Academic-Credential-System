@@ -1,5 +1,6 @@
 import {
   BrowserProvider,
+  JsonRpcProvider,
   Contract,
   ContractRunner,
   EventLog,
@@ -10,6 +11,8 @@ import {
   REGISTRY_ADDRESS,
   CREDENTIAL_ADDRESS,
   SEPOLIA_CHAIN_ID,
+  SEPOLIA_RPC_URL,
+  SEPOLIA_RPC_FALLBACKS,
   ETHERSCAN_TX,
   PINATA_GATEWAY,
   REGISTRY_ABI,
@@ -37,6 +40,7 @@ declare global {
     doVerify:           (btn: HTMLButtonElement) => Promise<void>;
     logout:             () => void;
     submitCreateAccount:(btn: HTMLButtonElement) => Promise<void>;
+    publicLookup:       (btn: HTMLButtonElement) => Promise<void>;
     refreshMajors:      (prefix: string) => void;
   }
 }
@@ -251,6 +255,32 @@ let provider:   BrowserProvider | null = null;
 let signer:     ContractRunner  | null = null;
 let registry:   Contract        | null = null;
 let credential: Contract        | null = null;
+
+// ─── Read-only provider (public lookup — no wallet required) ──────────────────
+let readProvider:   JsonRpcProvider;
+let readCredential: Contract;
+let readRegistry:   Contract;
+
+async function initReadProvider(): Promise<void> {
+  const urls = [SEPOLIA_RPC_URL, ...SEPOLIA_RPC_FALLBACKS];
+  for (const url of urls) {
+    try {
+      const p = new JsonRpcProvider(url);
+      await p.getBlockNumber();            // quick connectivity test
+      readProvider   = p;
+      readCredential = new Contract(CREDENTIAL_ADDRESS, CREDENTIAL_ABI, readProvider);
+      readRegistry   = new Contract(REGISTRY_ADDRESS,   REGISTRY_ABI,   readProvider);
+      console.log("[DACS] Read-only RPC connected:", url);
+      return;
+    } catch {
+      console.warn("[DACS] RPC failed, trying next:", url);
+    }
+  }
+  console.error("[DACS] All RPC endpoints failed.");
+}
+
+// Fire on page load — non-blocking
+initReadProvider();
 
 // ─── Wallet connection ────────────────────────────────────────────────────────
 async function connectWallet(): Promise<void> {
@@ -825,6 +855,218 @@ async function switchAccount(): Promise<void> {
   }
 }
 
+// ─── PUBLIC LOOKUP (no wallet required) ───────────────────────────────────────
+
+interface PublicCredEntry {
+  credHash:    string;
+  issuer:      string;
+  holder:      string;
+  metadataURI: string;
+  blockNumber: number;
+  status:      "VALID" | "REVOKED" | "ISSUER INVALID";
+  issuedDate:  string;
+}
+
+/**
+ * queryFilterSafe — public RPCs often cap eth_getLogs block range.
+ * Starts with a large window and halves it on failure until it works.
+ */
+async function queryFilterSafe(
+  contract: Contract,
+  filter: ReturnType<Contract["filters"][string]>,
+  latestBlock: number,
+): Promise<EventLog[]> {
+  // Try progressively smaller ranges: full history → 500k → 250k → 100k → 50k
+  const ranges = [latestBlock, 500_000, 250_000, 100_000, 50_000];
+  for (const range of ranges) {
+    const from = Math.max(0, latestBlock - range);
+    try {
+      return (await contract.queryFilter(filter, from, latestBlock)) as EventLog[];
+    } catch {
+      console.warn(`[DACS] queryFilter failed for range ${from}–${latestBlock}, trying smaller`);
+    }
+  }
+  throw new Error("All block-range attempts failed. The RPC may be overloaded — try again later.");
+}
+
+async function publicLookup(btn: HTMLButtonElement): Promise<void> {
+  const addr = getVal("publicLookupAddr");
+  const listEl      = document.getElementById("publicCredentialList")!;
+  const dashboardEl = document.getElementById("publicDashboard")!;
+
+  // Reset UI
+  listEl.innerHTML = "";
+  dashboardEl.className = "verify-dashboard";
+
+  if (!addr) {
+    setResult("publicLookupResult", "error", "Enter a wallet address.");
+    return;
+  }
+  if (!isAddress(addr)) {
+    setResult("publicLookupResult", "error", "Invalid Ethereum address format.");
+    return;
+  }
+
+  if (!readProvider) {
+    setResult("publicLookupResult", "pending", "Connecting to blockchain…");
+    await initReadProvider();
+    if (!readProvider) {
+      setResult("publicLookupResult", "error", "Could not connect to any Sepolia RPC endpoint. Please try again later.");
+      return;
+    }
+  }
+
+  setLoading(btn, true);
+  setResult("publicLookupResult", "pending", "Searching blockchain events…");
+
+  try {
+    const latestBlock = await readProvider.getBlockNumber();
+
+    // Query CredentialIssued events where holder = addr (3rd indexed param)
+    const issuedFilter = readCredential.filters.CredentialIssued(null, null, addr);
+    const issuedLogs   = await queryFilterSafe(readCredential, issuedFilter, latestBlock);
+
+    if (issuedLogs.length === 0) {
+      setResult("publicLookupResult", "error", "No credentials found for this address.");
+      return;
+    }
+
+    const MAX_DISPLAY = 20;
+    const truncated   = issuedLogs.length > MAX_DISPLAY;
+    const logsToShow  = truncated ? issuedLogs.slice(-MAX_DISPLAY) : issuedLogs;
+
+    setResult("publicLookupResult", "pending", `Found ${issuedLogs.length} credential(s). Loading details…`);
+
+    // For each credential, fetch status in parallel
+    const entries: PublicCredEntry[] = await Promise.all(
+      logsToShow.map(async (log) => {
+        const ev   = log as EventLog;
+        const args = ev.args;
+
+        const credHash:    string = args[0] as string;
+        const issuerAddr:  string = args[1] as string;
+        const holderAddr:  string = args[2] as string;
+        const metadataURI: string = args[3] as string;
+
+        // Parallel: revoke check + issuer registration + block timestamp
+        const [revokeLogs, isReg, block] = await Promise.all([
+          queryFilterSafe(readCredential, readCredential.filters.CredentialRevoked(credHash), latestBlock)
+            .catch(() => [] as EventLog[]),
+          readRegistry.isRegisteredIssuer(issuerAddr).catch(() => false),
+          readProvider.getBlock(ev.blockNumber).catch(() => null),
+        ]);
+
+        let status: PublicCredEntry["status"] = "VALID";
+        if (revokeLogs.length > 0) status = "REVOKED";
+        else if (!isReg)           status = "ISSUER INVALID";
+
+        const issuedDate = block ? formatTs(Number(block.timestamp)) : "Unknown";
+
+        return { credHash, issuer: issuerAddr, holder: holderAddr, metadataURI, blockNumber: ev.blockNumber, status, issuedDate };
+      })
+    );
+
+    // Render cards
+    setResult("publicLookupResult", "success", `${issuedLogs.length} credential(s) found.`);
+
+    for (const entry of entries) {
+      const card = document.createElement("div");
+      card.className = `cred-card${entry.status === "REVOKED" ? " revoked" : ""}`;
+
+      const shortHash   = `${entry.credHash.slice(0, 10)}…${entry.credHash.slice(-6)}`;
+      const shortIssuer = `${entry.issuer.slice(0, 6)}…${entry.issuer.slice(-4)}`;
+
+      const badgeClass = entry.status === "VALID" ? "valid" : entry.status === "REVOKED" ? "revoked" : "invalid";
+
+      card.innerHTML =
+        `<div class="cred-card-info">` +
+          `<span class="cred-card-hash">${shortHash}</span>` +
+          `<span class="cred-card-meta">Issuer: ${shortIssuer} · ${entry.issuedDate}</span>` +
+        `</div>` +
+        `<span class="cred-card-badge ${badgeClass}">${entry.status}</span>`;
+
+      card.addEventListener("click", () => showPublicDashboard(entry));
+      listEl.appendChild(card);
+    }
+
+    if (truncated) {
+      const msg = document.createElement("p");
+      msg.className = "public-truncate-msg";
+      msg.textContent = `Showing most recent ${MAX_DISPLAY} of ${issuedLogs.length} credentials.`;
+      listEl.appendChild(msg);
+    }
+
+  } catch (e) {
+    setResult("publicLookupResult", "error", `RPC error: ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function showPublicDashboard(entry: PublicCredEntry): void {
+  const dashboard = document.getElementById("publicDashboard")!;
+
+  // Status header
+  const statusEl = document.getElementById("pubDashStatus")!;
+  if (entry.status === "VALID") {
+    dashboard.className = "verify-dashboard show verified";
+    statusEl.className  = "dash-status verified";
+    setText("pubDashIcon",   "✅");
+    setText("pubDashLabel",  "CREDENTIAL VALID");
+    setText("pubDashReason", "");
+  } else if (entry.status === "REVOKED") {
+    dashboard.className = "verify-dashboard show invalid";
+    statusEl.className  = "dash-status invalid";
+    setText("pubDashIcon",   "❌");
+    setText("pubDashLabel",  "CREDENTIAL REVOKED");
+    setText("pubDashReason", "This credential has been revoked by the issuer.");
+  } else {
+    dashboard.className = "verify-dashboard show errored";
+    statusEl.className  = "dash-status errored";
+    setText("pubDashIcon",   "⚠️");
+    setText("pubDashLabel",  "ISSUER INVALID");
+    setText("pubDashReason", "The issuing institution is no longer registered.");
+  }
+
+  setText("pubDashCredId", entry.credHash);
+  setText("pubDashHolder", entry.holder);
+  setText("pubDashIssuer", entry.issuer);
+  setText("pubDashIssued", entry.issuedDate);
+
+  // Issuer registration badge
+  const regEl = document.getElementById("pubDashIssuerReg")!;
+  if (entry.status === "ISSUER INVALID") {
+    regEl.textContent = "✗ Issuer not registered";
+    regEl.className   = "dash-badge warn";
+  } else {
+    regEl.textContent = "✓ Issuer registered";
+    regEl.className   = "dash-badge ok";
+  }
+
+  // Revocation row
+  if (entry.status === "REVOKED") {
+    setHtml("pubDashRevoked", `<span class="text-warn">Revoked</span>`);
+  } else {
+    setHtml("pubDashRevoked", `<span class="text-ok">Not revoked</span>`);
+  }
+
+  // IPFS diploma link
+  const diplomaRow = document.getElementById("pubDashDiplomaRow")!;
+  if (entry.metadataURI && entry.metadataURI.startsWith("ipfs://")) {
+    const cid  = entry.metadataURI.replace("ipfs://", "");
+    const url  = `${PINATA_GATEWAY}${cid}`;
+    const link = document.getElementById("pubDashDiplomaLink") as HTMLAnchorElement;
+    link.href        = url;
+    link.textContent = `${cid.slice(0, 18)}… ↗ View PDF`;
+    diplomaRow.style.display = "flex";
+  } else {
+    diplomaRow.style.display = "none";
+  }
+
+  // Scroll into view
+  dashboard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 // ─── Expose to window (inline onclick in index.html) ──────────────────────────
 window.connectWallet      = connectWallet;
 window.switchAccount      = switchAccount;
@@ -836,8 +1078,9 @@ window.doGrantAccess      = doGrantAccess;
 window.doRevokeAccess     = doRevokeAccess;
 window.doDownloadDiploma  = doDownloadDiploma;
 window.doVerify           = doVerify;
-window.logout             = logout;
+window.logout              = logout;
 window.submitCreateAccount = submitCreateAccount;
+window.publicLookup        = publicLookup;
 window.refreshMajors       = refreshMajors;
 
 // Populate signup school <select> + degree dropdowns/datalist on boot
