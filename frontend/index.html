@@ -620,6 +620,21 @@
           <div id="regIssuerResult" class="result"></div>
         </div>
 
+        <!-- Manage Admins (multi-admin) -->
+        <div class="section">
+          <h3>🛡 Manage Admins</h3>
+          <p id="manageAdminsHint" style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+            Grant or revoke admin access. Admins can approve/reject schools and students.
+          </p>
+          <div id="manageAdminsAdd">
+            <label>New Admin Address</label>
+            <input id="newAdminAddr" placeholder="0x…" />
+            <button class="btn-issuer" onclick="addAdminWallet(this)">+ Add Admin</button>
+            <div id="addAdminResult" class="result"></div>
+          </div>
+          <div id="manageAdminsList" class="empty-state" style="margin-top:12px;">No admins.</div>
+        </div>
+
       </div>
     </div>
   </div>

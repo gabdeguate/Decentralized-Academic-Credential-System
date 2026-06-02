@@ -30,6 +30,12 @@ contract RegistryContract is IRegistry, Ownable {
     /// @dev Mirrors `issuerRequestStatus`; Approved is implied by `_registeredStudents`.
     mapping(address => RequestStatus) public studentRequestStatus;
 
+    /// @notice Extra admin addresses beyond the owner.
+    /// @dev The owner is always an admin (see `isAdmin`) and is NOT stored here.
+    ///      Admins may approve/reject/register/revoke issuers and students, but
+    ///      only the owner may add or remove admins.
+    mapping(address => bool) private _admins;
+
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
@@ -39,13 +45,60 @@ contract RegistryContract is IRegistry, Ownable {
     error NotRegistered(address issuer);
     error RequestPending();
     error NoPendingRequest();
+    error NotAdmin();
+    error AlreadyAdmin(address account);
+    error AdminNotFound(address account);
+
+    // -------------------------------------------------------------------------
+    // Modifiers
+    // -------------------------------------------------------------------------
+
+    /// @notice Restricts to the owner or any granted admin.
+    modifier onlyAdmin() {
+        if (msg.sender != owner() && !_admins[msg.sender]) revert NotAdmin();
+        _;
+    }
 
     // -------------------------------------------------------------------------
     // Constructor
     // -------------------------------------------------------------------------
 
-    /// @param initialOwner Address that will own the registry (passed to OZ Ownable v5).
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    /// @param initialOwner  Address that will own the registry (passed to OZ Ownable v5).
+    /// @param initialAdmins Extra admin addresses granted at deploy time. The owner
+    ///        is always an admin and need not be listed; zero/owner/duplicate
+    ///        entries are skipped.
+    constructor(address initialOwner, address[] memory initialAdmins) Ownable(initialOwner) {
+        for (uint256 i = 0; i < initialAdmins.length; i++) {
+            address a = initialAdmins[i];
+            if (a == address(0) || a == initialOwner || _admins[a]) continue;
+            _admins[a] = true;
+            emit AdminAdded(a);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Admin management (owner only)
+    // -------------------------------------------------------------------------
+
+    /// @inheritdoc IRegistry
+    function addAdmin(address account) external override onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        if (account == owner() || _admins[account]) revert AlreadyAdmin(account);
+        _admins[account] = true;
+        emit AdminAdded(account);
+    }
+
+    /// @inheritdoc IRegistry
+    function removeAdmin(address account) external override onlyOwner {
+        if (!_admins[account]) revert AdminNotFound(account);
+        _admins[account] = false;
+        emit AdminRemoved(account);
+    }
+
+    /// @inheritdoc IRegistry
+    function isAdmin(address account) external view override returns (bool) {
+        return account == owner() || _admins[account];
+    }
 
     // -------------------------------------------------------------------------
     // Application functions
@@ -60,7 +113,7 @@ contract RegistryContract is IRegistry, Ownable {
     }
 
     /// @inheritdoc IRegistry
-    function rejectIssuerRequest(address applicant, string calldata reason) external override onlyOwner {
+    function rejectIssuerRequest(address applicant, string calldata reason) external override onlyAdmin {
         if (issuerRequestStatus[applicant] != RequestStatus.Pending) revert NoPendingRequest();
         issuerRequestStatus[applicant] = RequestStatus.Rejected;
         emit IssuerRequestRejected(applicant, reason);
@@ -75,7 +128,7 @@ contract RegistryContract is IRegistry, Ownable {
     }
 
     /// @inheritdoc IRegistry
-    function rejectStudentRequest(address applicant, string calldata reason) external override onlyOwner {
+    function rejectStudentRequest(address applicant, string calldata reason) external override onlyAdmin {
         if (studentRequestStatus[applicant] != RequestStatus.Pending) revert NoPendingRequest();
         studentRequestStatus[applicant] = RequestStatus.Rejected;
         emit StudentRequestRejected(applicant, reason);
@@ -86,7 +139,7 @@ contract RegistryContract is IRegistry, Ownable {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc IRegistry
-    function registerIssuer(address issuer) external override onlyOwner {
+    function registerIssuer(address issuer) external override onlyAdmin {
         if (issuer == address(0)) revert ZeroAddress();
         if (_registeredIssuers[issuer]) revert AlreadyRegistered(issuer);
         _registeredIssuers[issuer] = true;
@@ -95,14 +148,14 @@ contract RegistryContract is IRegistry, Ownable {
     }
 
     /// @inheritdoc IRegistry
-    function revokeIssuer(address issuer) external override onlyOwner {
+    function revokeIssuer(address issuer) external override onlyAdmin {
         if (!_registeredIssuers[issuer]) revert NotRegistered(issuer);
         _registeredIssuers[issuer] = false;
         emit IssuerRemoved(issuer);
     }
 
     /// @inheritdoc IRegistry
-    function registerStudent(address student) external override onlyOwner {
+    function registerStudent(address student) external override onlyAdmin {
         if (student == address(0)) revert ZeroAddress();
         if (_registeredStudents[student]) revert AlreadyRegistered(student);
         _registeredStudents[student] = true;
@@ -111,7 +164,7 @@ contract RegistryContract is IRegistry, Ownable {
     }
 
     /// @inheritdoc IRegistry
-    function revokeStudent(address student) external override onlyOwner {
+    function revokeStudent(address student) external override onlyAdmin {
         if (!_registeredStudents[student]) revert NotRegistered(student);
         _registeredStudents[student] = false;
         emit StudentRemoved(student);

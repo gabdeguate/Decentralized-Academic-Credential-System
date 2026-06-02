@@ -68,6 +68,8 @@ declare global {
     rejectSchoolApp:    (addr: string, btn: HTMLButtonElement) => Promise<void>;
     approveStudentApp:  (addr: string, btn: HTMLButtonElement) => Promise<void>;
     rejectStudentApp:   (addr: string, btn: HTMLButtonElement) => Promise<void>;
+    addAdminWallet:     (btn: HTMLButtonElement) => Promise<void>;
+    removeAdminWallet:  (addr: string, btn: HTMLButtonElement) => Promise<void>;
   }
 }
 
@@ -145,10 +147,12 @@ async function detectAndRoute(addr: string): Promise<void> {
                       .catch((e: unknown) => { console.warn("isRegisteredStudent:", errMsg(e)); return false; });
   const studentReqStatP = (registry as Contract).studentRequestStatus(addr)
                       .catch((e: unknown) => { console.warn("studentRequestStatus:", errMsg(e)); return 0; });
+  const isAdminP = (registry as Contract).isAdmin(addr)
+                      .catch((e: unknown) => { console.warn("isAdmin:", errMsg(e)); return false; });
 
-  const [isIssuer, ownerAddr, issuedLogs, grantedLogs, reqStatus, isStudent, studentReqStatus] =
+  const [isIssuer, ownerAddr, issuedLogs, grantedLogs, reqStatus, isStudent, studentReqStatus, isOnchainAdmin] =
     await Promise.all([
-      isIssuerP, ownerP, issuedP, grantedP, reqStatP, isStudentP, studentReqStatP,
+      isIssuerP, ownerP, issuedP, grantedP, reqStatP, isStudentP, studentReqStatP, isAdminP,
     ]);
 
   const isOwner = typeof ownerAddr === "string" && ownerAddr.length > 0
@@ -156,15 +160,18 @@ async function detectAndRoute(addr: string): Promise<void> {
   const isConfiguredAdmin = ADMIN_ADDRESSES.includes(addr.toLowerCase());
   const profile = localStorage.getItem(profileKey(addr));
 
-  // Admin = on-chain owner OR a configured admin wallet. Takes precedence over
-  // every other role and gets its own dashboard. NOTE: on-chain onlyOwner actions
-  // (register/reject) still require the wallet to be the actual Registry owner.
-  if (isOwner || isConfiguredAdmin) {
+  // Admin = on-chain admin (owner or granted), OR a configured admin wallet (frontend
+  // allowlist, lets a wallet reach the dashboard before it's seeded on-chain). Takes
+  // precedence over every other role and gets its own dashboard. NOTE: on-chain
+  // approve/reject still require the wallet to actually be an on-chain admin; the
+  // "Manage Admins" panel (add/remove) is owner-only.
+  if (isOwner || isConfiguredAdmin || isOnchainAdmin === true) {
     userRole = "admin";
     setRoleBadge("admin", addr);
     showView("viewAdmin");
     renderPendingSchoolApps(addr);
     renderPendingStudentApps(addr);
+    renderManageAdmins(addr, isOwner);
     return;
   }
 
@@ -1998,6 +2005,121 @@ async function rejectStudentApp(addr: string, btn: HTMLButtonElement): Promise<v
   }
 }
 
+// ─── ADMIN: Manage admins (multi-admin) ───────────────────────────────────────
+// Owner-only management of the admin set. Lists the owner (always admin) plus any
+// granted admins, derived from AdminAdded history confirmed against on-chain
+// isAdmin(). Add/remove controls render only for the contract owner.
+function adminRow(addr: string, isOwnerRow: boolean, viewerIsOwner: boolean): string {
+  const short = `${addr.slice(0, 8)}…${addr.slice(-4)}`;
+  const badge = isOwnerRow
+    ? '<span class="dash-badge success">👑 Owner</span>'
+    : '<span class="dash-badge">🛡 Admin</span>';
+  const removeBtn = (viewerIsOwner && !isOwnerRow)
+    ? `<button class="btn-mail" onclick="removeAdminWallet('${addr}', this)">✗ Remove</button>`
+    : "";
+  return `
+    <div class="reissue-req-card" id="adminRow_${addr}">
+      <div class="rr-head">
+        <div>
+          <strong>${escapeHtml(short)}</strong>
+          <div class="cred-hash" style="font-size:0.72rem; color: var(--muted)">${escapeHtml(addr)}</div>
+        </div>
+        ${badge}
+      </div>
+      ${removeBtn ? `<div class="rr-actions">${removeBtn}</div>` : ""}
+      <div id="adminRowResult_${addr}" class="result"></div>
+    </div>`;
+}
+
+async function renderManageAdmins(adminAddr: string, isOwner: boolean): Promise<void> {
+  const container = document.getElementById("manageAdminsList");
+  const addBox    = document.getElementById("manageAdminsAdd");
+  const hint      = document.getElementById("manageAdminsHint");
+  if (!container || !registry) return;
+  void adminAddr; // admin set is global; admin-gated by the view's visibility
+
+  if (addBox) (addBox as HTMLElement).style.display = isOwner ? "" : "none";
+  if (hint) hint.textContent = isOwner
+    ? "Grant or revoke admin access. Admins can approve/reject schools and students; only the owner can manage admins."
+    : "Read-only — only the contract owner can add or remove admins.";
+
+  container.className = "empty-state";
+  container.textContent = "Loading…";
+
+  try {
+    const ownerAddr = (await (registry as Contract).owner()) as string;
+    const ownerLower = ownerAddr.toLowerCase();
+
+    const addedLogs = await (registry as Contract).queryFilter(
+      (registry as Contract).filters.AdminAdded(), 0, "latest");
+
+    // Candidates from history (lowercase → checksummed display), minus the owner.
+    const candidates = new Map<string, string>();
+    for (const log of addedLogs as EventLog[]) {
+      const a = log.args?.admin as string;
+      candidates.set(a.toLowerCase(), a);
+    }
+    candidates.delete(ownerLower);
+
+    // Confirm each candidate against current on-chain status (handles re-add/remove).
+    const granted: string[] = [];
+    await Promise.all([...candidates].map(async ([lower, original]) => {
+      const ok = await (registry as Contract).isAdmin(lower).catch(() => false);
+      if (ok) granted.push(original);
+    }));
+
+    const rows = [adminRow(ownerAddr, true, isOwner)];
+    for (const a of granted.sort()) rows.push(adminRow(a, false, isOwner));
+
+    container.className = "";
+    container.innerHTML = rows.join("");
+  } catch (e) {
+    container.className = "empty-state";
+    container.textContent = `Error: ${errMsg(e)}`;
+  }
+}
+
+async function addAdminWallet(btn: HTMLButtonElement): Promise<void> {
+  const input = document.getElementById("newAdminAddr") as HTMLInputElement | null;
+  const raw = input?.value.trim() ?? "";
+  if (!isAddress(raw)) {
+    setResult("addAdminResult", "error", "❌ Enter a valid 0x… wallet address.");
+    return;
+  }
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).addAdmin(raw);
+    setResult("addAdminResult", "pending", `⏳ Granting admin… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult("addAdminResult", "success", `✅ Admin added. ${txLink(tx.hash)}`);
+    if (input) input.value = "";
+    renderManageAdmins(connectedAddr, true);
+  } catch (e) {
+    setResult("addAdminResult", "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function removeAdminWallet(addr: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `adminRowResult_${addr}`;
+  if (!window.confirm(`Remove admin rights from ${addr}?`)) return;
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const tx = await (registry as Contract).removeAdmin(addr);
+    setResult(resultId, "pending", `⏳ Removing… ${txLink(tx.hash)}`);
+    await tx.wait();
+    setResult(resultId, "success", "✓ Admin removed.");
+    renderManageAdmins(connectedAddr, true);
+  } catch (e) {
+    setResult(resultId, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // ─── Switch MetaMask account ──────────────────────────────────────────────────
 async function switchAccount(): Promise<void> {
   if (!window.ethereum) return;
@@ -2044,6 +2166,8 @@ window.approveSchoolApp     = approveSchoolApp;
 window.rejectSchoolApp      = rejectSchoolApp;
 window.approveStudentApp    = approveStudentApp;
 window.rejectStudentApp     = rejectStudentApp;
+window.addAdminWallet       = addAdminWallet;
+window.removeAdminWallet    = removeAdminWallet;
 
 // Populate signup school <select> + degree dropdowns/datalist on boot
 // (DOM is ready — script tag at end of body).

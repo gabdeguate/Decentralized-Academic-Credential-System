@@ -16,6 +16,7 @@ export const PINATA_GATEWAY  = "https://gateway.pinata.cloud/ipfs/";
 // the wallet to be the actual Registry owner. Stored lowercase for comparison.
 export const ADMIN_ADDRESSES: readonly string[] = [
   "0xFAbF6cfFd974e49e55732B957df00493D0562AE8",
+  "0xfF48db6b1dC80546aB12d2B5F030D0bE6A591916",
 ].map((a) => a.toLowerCase());
 
 // Minimal ABI — only the functions used by the frontend.
@@ -34,6 +35,10 @@ export const REGISTRY_ABI = [
   "function revokeStudent(address student) external",
   "function isRegisteredStudent(address student) external view returns (bool)",
   "function studentRequestStatus(address applicant) external view returns (uint8)", // 0=None 1=Pending 2=Rejected
+  // Multi-admin management — owner grants/revokes admin rights; admins can approve/reject
+  "function addAdmin(address account) external",
+  "function removeAdmin(address account) external",
+  "function isAdmin(address account) external view returns (bool)",
   // Events — required for contract.filters.* and queryFilter
   "event IssuerAdded(address indexed issuer)",
   "event IssuerRequested(address indexed applicant, string metadataURI)",
@@ -42,12 +47,17 @@ export const REGISTRY_ABI = [
   "event StudentRemoved(address indexed student)",
   "event StudentRequested(address indexed applicant, string metadataURI)",
   "event StudentRequestRejected(address indexed applicant, string reason)",
+  "event AdminAdded(address indexed admin)",
+  "event AdminRemoved(address indexed admin)",
   // Errors — required for ethers to decode revert reasons
   "error ZeroAddress()",
   "error AlreadyRegistered(address issuer)",
   "error NotRegistered(address issuer)",
   "error RequestPending()",
   "error NoPendingRequest()",
+  "error NotAdmin()",
+  "error AlreadyAdmin(address account)",
+  "error AdminNotFound(address account)",
   "error OwnableUnauthorizedAccount(address account)", // OZ Ownable v5
 ] as const;
 

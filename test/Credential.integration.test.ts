@@ -20,7 +20,7 @@ describe("CredentialContract — end-to-end flow", function () {
 
     // Deploy Registry
     const RegistryFactory = await ethers.getContractFactory("RegistryContract");
-    registry = await RegistryFactory.deploy(owner.address);
+    registry = await RegistryFactory.deploy(owner.address, []);
     await registry.waitForDeployment();
 
     // Deploy Credential with registry address

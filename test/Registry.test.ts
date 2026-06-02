@@ -13,7 +13,7 @@ describe("RegistryContract", function () {
     [owner, issuer, stranger] = await ethers.getSigners();
 
     const Factory = await ethers.getContractFactory("RegistryContract");
-    registry = await Factory.deploy(owner.address);
+    registry = await Factory.deploy(owner.address, []);
     await registry.waitForDeployment();
   });
 
@@ -47,11 +47,10 @@ describe("RegistryContract", function () {
         .withArgs(issuer.address);
     });
 
-    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+    it("non-admin reverts with NotAdmin", async function () {
       await expect(
         registry.connect(stranger).registerIssuer(issuer.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
-        .withArgs(stranger.address);
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
     });
 
     it("reverts on zero address", async function () {
@@ -99,11 +98,10 @@ describe("RegistryContract", function () {
         .withArgs(issuer.address);
     });
 
-    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+    it("non-admin reverts with NotAdmin", async function () {
       await expect(
         registry.connect(stranger).revokeIssuer(issuer.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
-        .withArgs(stranger.address);
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
     });
 
     it("reverts if issuer not registered", async function () {
@@ -198,11 +196,10 @@ describe("RegistryContract", function () {
         .withArgs(stranger.address, "no proof");
     });
 
-    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+    it("non-admin reverts with NotAdmin", async function () {
       await expect(
         registry.connect(issuer).rejectStudentRequest(stranger.address, "x")
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
-        .withArgs(issuer.address);
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
     });
 
     it("reverts with NoPendingRequest when nothing is pending", async function () {
@@ -230,11 +227,10 @@ describe("RegistryContract", function () {
       expect(await registry.studentRequestStatus(stranger.address)).to.equal(0); // None
     });
 
-    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+    it("non-admin reverts with NotAdmin", async function () {
       await expect(
         registry.connect(stranger).registerStudent(stranger.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
-        .withArgs(stranger.address);
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
     });
 
     it("reverts on zero address", async function () {
@@ -268,11 +264,10 @@ describe("RegistryContract", function () {
         .withArgs(stranger.address);
     });
 
-    it("non-owner reverts with OwnableUnauthorizedAccount", async function () {
+    it("non-admin reverts with NotAdmin", async function () {
       await expect(
         registry.connect(issuer).revokeStudent(stranger.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
-        .withArgs(issuer.address);
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
     });
 
     it("reverts if student not registered", async function () {
@@ -300,6 +295,150 @@ describe("RegistryContract", function () {
       expect(await registry.isRegisteredIssuer(stranger.address)).to.be.false;
       await registry.connect(owner).registerIssuer(issuer.address);
       expect(await registry.isRegisteredStudent(issuer.address)).to.be.false;
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Admin management (multi-admin)
+  // ---------------------------------------------------------------------------
+
+  describe("isAdmin", function () {
+    it("owner is always an admin", async function () {
+      expect(await registry.isAdmin(owner.address)).to.be.true;
+    });
+
+    it("returns false for a non-admin", async function () {
+      expect(await registry.isAdmin(stranger.address)).to.be.false;
+    });
+  });
+
+  describe("addAdmin", function () {
+    it("owner can grant admin rights", async function () {
+      await registry.connect(owner).addAdmin(stranger.address);
+      expect(await registry.isAdmin(stranger.address)).to.be.true;
+    });
+
+    it("emits AdminAdded", async function () {
+      await expect(registry.connect(owner).addAdmin(stranger.address))
+        .to.emit(registry, "AdminAdded")
+        .withArgs(stranger.address);
+    });
+
+    it("reverts on zero address", async function () {
+      await expect(
+        registry.connect(owner).addAdmin(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(registry, "ZeroAddress");
+    });
+
+    it("reverts with AlreadyAdmin when granting the owner", async function () {
+      await expect(
+        registry.connect(owner).addAdmin(owner.address)
+      ).to.be.revertedWithCustomError(registry, "AlreadyAdmin")
+        .withArgs(owner.address);
+    });
+
+    it("reverts with AlreadyAdmin on double-grant", async function () {
+      await registry.connect(owner).addAdmin(stranger.address);
+      await expect(
+        registry.connect(owner).addAdmin(stranger.address)
+      ).to.be.revertedWithCustomError(registry, "AlreadyAdmin")
+        .withArgs(stranger.address);
+    });
+
+    it("a non-owner admin cannot add admins (owner-only)", async function () {
+      await registry.connect(owner).addAdmin(issuer.address); // issuer now admin
+      await expect(
+        registry.connect(issuer).addAdmin(stranger.address)
+      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount")
+        .withArgs(issuer.address);
+    });
+  });
+
+  describe("removeAdmin", function () {
+    beforeEach(async function () {
+      await registry.connect(owner).addAdmin(stranger.address);
+    });
+
+    it("owner can revoke admin rights", async function () {
+      await registry.connect(owner).removeAdmin(stranger.address);
+      expect(await registry.isAdmin(stranger.address)).to.be.false;
+    });
+
+    it("emits AdminRemoved", async function () {
+      await expect(registry.connect(owner).removeAdmin(stranger.address))
+        .to.emit(registry, "AdminRemoved")
+        .withArgs(stranger.address);
+    });
+
+    it("reverts with AdminNotFound for a non-admin", async function () {
+      await expect(
+        registry.connect(owner).removeAdmin(issuer.address)
+      ).to.be.revertedWithCustomError(registry, "AdminNotFound")
+        .withArgs(issuer.address);
+    });
+
+    it("cannot remove the owner's implicit admin status", async function () {
+      // owner is not stored in the _admins set, so removeAdmin(owner) reverts...
+      await expect(
+        registry.connect(owner).removeAdmin(owner.address)
+      ).to.be.revertedWithCustomError(registry, "AdminNotFound")
+        .withArgs(owner.address);
+      // ...and the owner remains an admin regardless.
+      expect(await registry.isAdmin(owner.address)).to.be.true;
+    });
+  });
+
+  describe("admin can perform owner-gated actions", function () {
+    beforeEach(async function () {
+      await registry.connect(owner).addAdmin(stranger.address); // stranger = admin
+    });
+
+    it("admin can register an issuer", async function () {
+      await registry.connect(stranger).registerIssuer(issuer.address);
+      expect(await registry.isRegisteredIssuer(issuer.address)).to.be.true;
+    });
+
+    it("admin can register a student", async function () {
+      const [, , , , someone] = await ethers.getSigners();
+      await registry.connect(stranger).registerStudent(someone.address);
+      expect(await registry.isRegisteredStudent(someone.address)).to.be.true;
+    });
+
+    it("admin can reject a pending student request", async function () {
+      const [, , , , applicant] = await ethers.getSigners();
+      await registry.connect(applicant).requestStudent("ipfs://app");
+      await registry.connect(stranger).rejectStudentRequest(applicant.address, "no proof");
+      expect(await registry.studentRequestStatus(applicant.address)).to.equal(2); // Rejected
+    });
+
+    it("loses access after removeAdmin", async function () {
+      await registry.connect(owner).removeAdmin(stranger.address);
+      await expect(
+        registry.connect(stranger).registerIssuer(issuer.address)
+      ).to.be.revertedWithCustomError(registry, "NotAdmin");
+    });
+  });
+
+  describe("constructor seeding", function () {
+    it("seeds initialAdmins as admins", async function () {
+      const Factory = await ethers.getContractFactory("RegistryContract");
+      const seeded = await Factory.deploy(owner.address, [stranger.address]);
+      await seeded.waitForDeployment();
+      expect(await seeded.isAdmin(stranger.address)).to.be.true;
+      expect(await seeded.isAdmin(issuer.address)).to.be.false;
+    });
+
+    it("skips zero, owner, and duplicate seed entries without reverting", async function () {
+      const Factory = await ethers.getContractFactory("RegistryContract");
+      const seeded = await Factory.deploy(owner.address, [
+        ethers.ZeroAddress,
+        owner.address,
+        stranger.address,
+        stranger.address,
+      ]);
+      await seeded.waitForDeployment();
+      expect(await seeded.isAdmin(stranger.address)).to.be.true;
+      expect(await seeded.isAdmin(owner.address)).to.be.true;
     });
   });
 });

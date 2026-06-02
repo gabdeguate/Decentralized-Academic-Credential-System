@@ -22,7 +22,7 @@ describe("CredentialContract", function () {
     [owner, issuer, holder, verifier, stranger] = await ethers.getSigners();
 
     const RegistryFactory = await ethers.getContractFactory("RegistryContract");
-    registry = await RegistryFactory.deploy(owner.address);
+    registry = await RegistryFactory.deploy(owner.address, []);
     await registry.waitForDeployment();
 
     const CredentialFactory = await ethers.getContractFactory("CredentialContract");

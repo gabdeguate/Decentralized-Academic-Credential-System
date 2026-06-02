@@ -36,9 +36,31 @@ interface IRegistry {
     /// @notice Emitted when the owner rejects a pending student application.
     event StudentRequestRejected(address indexed applicant, string reason);
 
+    /// @notice Emitted when the owner grants admin rights to an address.
+    event AdminAdded(address indexed admin);
+
+    /// @notice Emitted when the owner revokes an address's admin rights.
+    event AdminRemoved(address indexed admin);
+
     // -------------------------------------------------------------------------
     // Functions
     // -------------------------------------------------------------------------
+
+    /// @notice Grant admin rights to an address. Owner only.
+    /// @dev Admins may approve/reject/register/revoke issuers and students, but
+    ///      may NOT add or remove other admins (that stays owner-only).
+    /// @param account Address to promote to admin.
+    function addAdmin(address account) external;
+
+    /// @notice Revoke an address's admin rights. Owner only.
+    /// @dev The owner is always an admin and cannot be removed via this call.
+    /// @param account Address to demote.
+    function removeAdmin(address account) external;
+
+    /// @notice Check whether an address has admin rights (owner counts as admin).
+    /// @param account Address to query.
+    /// @return True if the address is the owner or a granted admin.
+    function isAdmin(address account) external view returns (bool);
 
     /// @notice Apply to become a registered issuer. Anyone may call.
     /// @param metadataURI "ipfs://CID" pointing to application metadata.
