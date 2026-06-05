@@ -20,3 +20,9 @@ coverage.json
 # IDE
 .vscode/
 .idea/
+
+# Codex / local agent tooling
+.codex/
+.agents/
+AGENTS.md
+skills-lock.json

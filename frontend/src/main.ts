@@ -29,6 +29,7 @@ import {
 } from "./utils/reissueQueue.js";
 import {
   MOCK_SCHOOLS,
+  MOCK_ISSUERS,
   MAJORS_BY_DEPT,
   DEPARTMENTS,
   DEGREE_LEVELS,
@@ -100,7 +101,7 @@ let lastRejectedRole: "student" | "school" = "student";
 function showView(viewId: ViewId): void {
   for (const id of VIEW_IDS) {
     const el = document.getElementById(id);
-    if (el) el.style.display = id === viewId ? "block" : "none";
+    if (el) el.style.display = id === viewId ? "" : "none";
   }
 }
 
@@ -118,7 +119,7 @@ function setRoleBadge(role: UserRole, addr: string): void {
     return;
   }
   const short = `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-  el.textContent   = `Role: ${role} · ${short}`;
+  el.textContent   = `${role.toUpperCase()} ${short}`;
   el.style.display = "inline-flex";
 }
 
@@ -133,6 +134,50 @@ function logout(): void {
 
 function profileKey(addr: string): string {
   return `dacs:profile:${addr.toLowerCase()}`;
+}
+
+function issuerProfileKey(addr: string): string {
+  return `dacs:issuerProfile:${addr.toLowerCase()}`;
+}
+
+function rememberIssuerProfile(
+  addr: string,
+  profile: { name?: string; contact?: string; metadataURI?: string; docCid?: string },
+): void {
+  if (!addr || !profile.name?.trim()) return;
+  try {
+    localStorage.setItem(
+      issuerProfileKey(addr),
+      JSON.stringify({
+        name: profile.name.trim(),
+        contact: profile.contact ?? "",
+        metadataURI: profile.metadataURI ?? "",
+        docCid: profile.docCid ?? "",
+        updatedAt: Date.now(),
+      }),
+    );
+    schoolNameCache.set(addr.toLowerCase(), profile.name.trim());
+  } catch {
+    /* localStorage may be unavailable in private browsing; chain metadata still works. */
+  }
+}
+
+function issuerNameFromLocal(addr: string): string | null {
+  try {
+    const raw = localStorage.getItem(issuerProfileKey(addr));
+    if (!raw) return null;
+    const profile = JSON.parse(raw) as { name?: string };
+    return profile.name?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function renderIssuerIdentity(addr: string): Promise<void> {
+  const name = await resolveSchoolName(addr);
+  const hasName = name.length > 0 && !name.toLowerCase().startsWith("0x");
+  setText("issuerGreeting", hasName ? `Welcome, ${name}` : "Issuer Dashboard");
+  setText("issuerSubtitle", `${shortAddr(addr)} - registered issuer`);
 }
 
 async function detectAndRoute(addr: string): Promise<void> {
@@ -228,6 +273,7 @@ async function detectAndRoute(addr: string): Promise<void> {
 
   if (role === "issuer") {
     showView("viewIssuer");
+    renderIssuerIdentity(addr).catch((e) => console.warn("renderIssuerIdentity:", errMsg(e)));
     renderPendingReissues(addr);
   } else if (role === "student") {
     showView("viewStudent");
@@ -378,18 +424,18 @@ async function submitCreateAccount(btn: HTMLButtonElement): Promise<void> {
       JSON.stringify({ name, school, createdAt: Date.now() }),
     );
 
-    setResult("signupResult", "pending", "⬆ Pinning application metadata…");
+    setResult("signupResult", "pending", "Pinning application metadata...");
     const meta = { version: 1, name, school, contact, appliedAt: new Date().toISOString() };
     const jsonCid = await uploadJsonToPinata(meta, `dacs-student-app-${connectedAddr}`);
 
-    setResult("signupResult", "pending", "⏳ Submitting application on-chain…");
+    setResult("signupResult", "pending", "Submitting application on-chain...");
     const tx = await (registry as Contract).requestStudent(`ipfs://${jsonCid}`);
     await tx.wait();
 
-    setResult("signupResult", "success", "✅ Application submitted. Routing…");
+    setResult("signupResult", "success", "Application submitted. Routing...");
     await detectAndRoute(connectedAddr);
   } catch (e) {
-    setResult("signupResult", "error", `❌ ${errMsg(e)}`);
+    setResult("signupResult", "error", errMsg(e));
   } finally {
     setLoading(btn, false);
   }
@@ -410,21 +456,27 @@ async function submitSchoolApplication(btn: HTMLButtonElement): Promise<void> {
     if (!contact) throw new Error("Enter a contact email.");
     if (!docFile) throw new Error("Attach a supporting PDF document.");
 
-    setResult("signupResult", "pending", "⬆ Uploading supporting document to IPFS…");
+    setResult("signupResult", "pending", "Uploading supporting document to IPFS...");
     const docCid = await uploadToPinata(docFile);
 
-    setResult("signupResult", "pending", "⬆ Pinning application metadata…");
+    setResult("signupResult", "pending", "Pinning application metadata...");
     const meta = { version: 1, name, contact, note, docCid, appliedAt: new Date().toISOString() };
     const jsonCid = await uploadJsonToPinata(meta, `dacs-issuer-app-${connectedAddr}`);
 
-    setResult("signupResult", "pending", "⏳ Submitting application on-chain…");
+    setResult("signupResult", "pending", "Submitting application on-chain...");
     const tx = await (registry as Contract).requestIssuer(`ipfs://${jsonCid}`);
     await tx.wait();
 
-    setResult("signupResult", "success", "✅ Application submitted. Routing…");
+    rememberIssuerProfile(connectedAddr, {
+      name,
+      contact,
+      metadataURI: `ipfs://${jsonCid}`,
+      docCid,
+    });
+    setResult("signupResult", "success", "Application submitted. Routing...");
     await detectAndRoute(connectedAddr);
   } catch (e) {
-    setResult("signupResult", "error", `❌ ${errMsg(e)}`);
+    setResult("signupResult", "error", errMsg(e));
   } finally {
     setLoading(btn, false);
   }
@@ -482,7 +534,7 @@ async function connectWallet(): Promise<void> {
         });
         provider = new BrowserProvider(window.ethereum);
       } catch {
-        setWalletStatus("❌ Switch MetaMask to Sepolia network", false);
+        setWalletStatus("Switch MetaMask to Sepolia network", false);
         return;
       }
     }
@@ -497,7 +549,7 @@ async function connectWallet(): Promise<void> {
     connectedAddr = addr;
 
     const btn = document.getElementById("connectBtn") as HTMLButtonElement;
-    btn.textContent = "Connected ✓";
+    btn.textContent = "Connected";
     btn.disabled    = true;
     (document.getElementById("switchBtn") as HTMLElement).style.display = "inline-flex";
     (document.getElementById("logoutBtn") as HTMLElement).style.display = "inline-flex";
@@ -507,7 +559,7 @@ async function connectWallet(): Promise<void> {
 
     await detectAndRoute(addr);
   } catch (e) {
-    setWalletStatus(`❌ ${errMsg(e)}`, false);
+    setWalletStatus(errMsg(e), false);
   }
 }
 
@@ -651,20 +703,28 @@ function errMsg(e: unknown): string {
 
 function txLink(hash: string): string {
   const short = `${hash.slice(0, 12)}…${hash.slice(-6)}`;
-  return `<a href="${ETHERSCAN_TX}${hash}" target="_blank" rel="noopener">↗ ${short}</a>`;
+  return `<a href="${ETHERSCAN_TX}${hash}" target="_blank" rel="noopener">Transaction ${short}</a>`;
+}
+
+function normalizeStatusHtml(html: string): string {
+  return html
+    .replace(/(?:✅|❌|⏳|⬆|📤|📎|⛓|📥|🔍|🔎|⚠️|⚠)\s*/g, "")
+    .replace(/[✓✗]\s*/g, "")
+    .replace(/↗\s*/g, "")
+    .replace(/\s+—\s+/g, " - ");
 }
 
 function setResult(id: string, type: "success" | "error" | "pending", html: string): void {
   const el = document.getElementById(id);
   if (!el) return;
   el.className = `result show ${type}`;
-  el.innerHTML = html;
+  el.innerHTML = normalizeStatusHtml(html);
 }
 
 function setLoading(btn: HTMLButtonElement, loading: boolean): void {
   if (loading) {
     (btn as HTMLButtonElement & { _label?: string })._label = btn.textContent ?? "";
-    btn.textContent = "⏳ Sending…";
+    btn.textContent = "Sending...";
     btn.disabled    = true;
   } else {
     btn.textContent = (btn as HTMLButtonElement & { _label?: string })._label ?? btn.textContent;
@@ -752,16 +812,18 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
     // can't recover degreeType). Student/Verifier dashboards read this to
     // render a human-readable title for each credential.
     setResult("issueResult", "pending", `📎 Pinning metadata sidecar…`);
-    const level     = getVal("issueLevel");
-    const major     = getVal("issueMajor");
-    const dept      = getVal("issueDept");
-    const studentId = getVal("issueStudentId");
+    const level      = getVal("issueLevel");
+    const major      = getVal("issueMajor");
+    const dept       = getVal("issueDept");
+    const studentId  = getVal("issueStudentId");
+    const issuerName = connectedAddr ? await resolveSchoolName(connectedAddr) : "";
     let jsonCid: string;
     try {
       jsonCid = await uploadJsonToPinata(
         {
           version:    1,
           level, major, dept, studentId,
+          issuerName,
           degreeType: composed,
           gradDate,
           pdfCid,
@@ -928,13 +990,13 @@ async function doVerify(btn: HTMLButtonElement): Promise<void> {
       dashboard.className = "verify-dashboard show verified";
       statusEl.className  = "dash-status verified";
       setText("dashIcon",   "✅");
-      setText("dashLabel",  "CREDENTIAL VERIFIED");
+      setText("dashLabel",  "Verified");
       setText("dashReason", "");
     } else {
       dashboard.className = "verify-dashboard show invalid";
       statusEl.className  = "dash-status invalid";
       setText("dashIcon",   "❌");
-      setText("dashLabel",  "CREDENTIAL INVALID");
+      setText("dashLabel",  "Invalid");
       setText("dashReason", reason);
     }
 
@@ -965,7 +1027,7 @@ async function doVerify(btn: HTMLButtonElement): Promise<void> {
     const statusEl      = document.getElementById("dashStatus")!;
     statusEl.className  = "dash-status errored";
     setText("dashIcon",   "⚠️");
-    setText("dashLabel",  "ERROR");
+    setText("dashLabel",  "Verification error");
     setText("dashReason", errMsg(e));
     setText("dashCredId", "—");
     setHtml("dashHolder",    "—"); setHtml("dashIssuer", "—");
@@ -1017,7 +1079,7 @@ async function loadDashboardDetails(credHash: string): Promise<void> {
     // Issuer registration status — live check (not from event)
     const isReg: boolean = await (registry as Contract).isRegisteredIssuer(issuerAddr);
     const regEl  = document.getElementById("dashIssuerReg")!;
-    regEl.textContent = isReg ? "✓ Issuer still registered" : "✗ Issuer no longer registered";
+    regEl.textContent = isReg ? "Issuer registered" : "Issuer not registered";
     regEl.className   = `dash-badge ${isReg ? "ok" : "warn"}`;
 
     // Block timestamp for issue date
@@ -1030,7 +1092,7 @@ async function loadDashboardDetails(credHash: string): Promise<void> {
       const url  = `${PINATA_GATEWAY}${cid}`;
       const link = document.getElementById("dashDiplomaLink") as HTMLAnchorElement;
       link.href        = url;
-      link.textContent = `${cid.slice(0, 18)}… ↗ View PDF`;
+      link.textContent = `${cid.slice(0, 18)}… View PDF`;
       document.getElementById("dashDiplomaRow")!.style.display = "flex";
     }
   }
@@ -1050,7 +1112,7 @@ async function loadDashboardDetails(credHash: string): Promise<void> {
 
 type CredMeta =
   | { kind: "json"; level: string; major: string; dept: string; studentId: string;
-      degreeType: string; gradDate: string; pdfCid: string; }
+      degreeType: string; gradDate: string; pdfCid: string; issuerName?: string; }
   | { kind: "pdf-legacy"; pdfCid: string; }
   | { kind: "empty" }
   | { kind: "error"; message: string };
@@ -1084,6 +1146,7 @@ async function fetchCredentialMetadata(uri: string): Promise<CredMeta> {
             degreeType: String(data.degreeType?? ""),
             gradDate:   String(data.gradDate  ?? ""),
             pdfCid:     data.pdfCid,
+            issuerName: String(data.issuerName ?? data.institution ?? data.school ?? data.university ?? ""),
           };
         }
       } catch {
@@ -1118,20 +1181,20 @@ function cardTitleFromMeta(
   if (extras.localLabel) {
     return {
       title:    extras.localLabel,
-      subtitle: "Custom label · click ✎ to edit",
+      subtitle: "Custom local label",
     };
   }
   // Recovered Pinata pin filename (Phase 5).
   if (extras.pinName) {
     return {
       title:    extras.pinName,
-      subtitle: "From original PDF filename · click ✎ to edit",
+      subtitle: "Recovered from original PDF filename",
     };
   }
   // Hash fallback.
   return {
     title:    `Credential ${credHash.slice(0, 10)}…${credHash.slice(-6)}`,
-    subtitle: "Legacy credential — click ✎ to add a label or issue a new one.",
+    subtitle: "Legacy credential - local label available or request re-issuance.",
   };
 }
 
@@ -1151,26 +1214,66 @@ function shortAddr(addr: string): string {
 // no application, no name, or the registry is unavailable. Cached per issuer.
 const schoolNameCache = new Map<string, string>(); // issuerLower -> display name
 
+async function findLatestIssuerRequestLog(reg: Contract, issuerAddr: string): Promise<EventLog | undefined> {
+  const chainProvider = provider ?? readProvider;
+  if (!chainProvider) return undefined;
+
+  const filter = reg.filters.IssuerRequested(issuerAddr);
+  const latest = await chainProvider.getBlockNumber();
+  const chunkSize = 50_000;
+  const maxLookback = 1_000_000;
+  const minBlock = Math.max(0, latest - maxLookback);
+
+  for (let to = latest; to >= minBlock; to -= chunkSize) {
+    const from = Math.max(minBlock, to - chunkSize + 1);
+    try {
+      const logs = (await reg.queryFilter(filter, from, to)) as EventLog[];
+      if (logs.length > 0) return logs[logs.length - 1];
+    } catch (e) {
+      console.warn(`IssuerRequested query ${from}-${to}:`, errMsg(e));
+    }
+  }
+  return undefined;
+}
+
 async function resolveSchoolName(issuerAddr: string): Promise<string> {
   const key = issuerAddr.toLowerCase();
+  const localName = issuerNameFromLocal(issuerAddr);
+  if (localName) {
+    schoolNameCache.set(key, localName);
+    return localName;
+  }
+
   const cached = schoolNameCache.get(key);
   if (cached !== undefined) return cached;
 
   let name = shortAddr(issuerAddr); // fallback
+  const configured = MOCK_ISSUERS.find((issuer) => issuer.walletAddress.toLowerCase() === key);
+  if (configured?.name.trim()) {
+    name = configured.name.trim();
+    schoolNameCache.set(key, name);
+    return name;
+  }
   // Use the wallet-bound registry when logged in, else the read-only one (public path).
   const reg: Contract | null = registry ?? (readRegistry ?? null);
   if (reg) {
     try {
-      const logs = await reg.queryFilter(
-        reg.filters.IssuerRequested(issuerAddr), 0, "latest");
-      const last = logs[logs.length - 1] as EventLog | undefined;
+      const last = await findLatestIssuerRequestLog(reg, issuerAddr);
       const uri = last?.args?.metadataURI as string | undefined;
       if (uri) {
         const cid = uri.replace(/^ipfs:\/\//, "");
         const res = await fetch(`${PINATA_GATEWAY}${cid}`);
         if (res.ok) {
-          const meta = (await res.json()) as { name?: string };
-          if (meta.name && meta.name.trim()) name = meta.name.trim();
+          const meta = (await res.json()) as { name?: string; contact?: string; docCid?: string };
+          if (meta.name && meta.name.trim()) {
+            name = meta.name.trim();
+            rememberIssuerProfile(issuerAddr, {
+              name,
+              contact: meta.contact,
+              metadataURI: uri,
+              docCid: meta.docCid,
+            });
+          }
         }
       }
     } catch (e) {
@@ -1279,12 +1382,12 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     const pendingReq = findReissueByCredHash(credHash);
     const { title, subtitle } = cardTitleFromMeta(meta, credHash, { pinName, localLabel });
 
-    // ✎ button shown only when the title is derived from non-sidecar sources
+    // Label button shown only when the title is derived from non-sidecar sources
     // (i.e. the holder can override). For sidecar-backed creds the title is
     // already authoritative.
     const showLabelEdit = meta.kind !== "json";
     const labelBtn      = showLabelEdit
-      ? `<button class="btn-label-edit" onclick="toggleLabelEdit('${credHash}')" title="Edit local label">✎</button>`
+      ? `<button class="btn-label-edit" onclick="toggleLabelEdit('${credHash}')" title="Edit local label">Edit</button>`
       : "";
     const labelEditRow  = showLabelEdit
       ? `<div id="labelEdit_${sh}" class="label-edit" style="display:none">
@@ -1297,11 +1400,11 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     // Phase 6 — pending / approved / rejected reissue badges.
     let reissueBadge = "";
     if (pendingReq?.status === "pending") {
-      reissueBadge = `<span class="dash-badge pending" style="margin-left:8px">⏳ Reissue Pending</span>`;
+      reissueBadge = `<span class="dash-badge pending" style="margin-left:8px">Reissue pending</span>`;
     } else if (pendingReq?.status === "approved") {
-      reissueBadge = `<span class="dash-badge ok" style="margin-left:8px">✓ Reissued — see new cred</span>`;
+      reissueBadge = `<span class="dash-badge ok" style="margin-left:8px">Reissued</span>`;
     } else if (pendingReq?.status === "rejected") {
-      reissueBadge = `<span class="dash-badge warn" style="margin-left:8px" title="${escapeHtml(pendingReq.rejectReason ?? "")}">✗ Reissue Rejected</span>`;
+      reissueBadge = `<span class="dash-badge warn" style="margin-left:8px" title="${escapeHtml(pendingReq.rejectReason ?? "")}">Reissue rejected</span>`;
     }
     const reissueBtnDisabled = pendingReq?.status === "pending" ? "disabled" : "";
 
@@ -1316,8 +1419,8 @@ async function renderStudentDashboard(addr: string): Promise<void> {
         </div>
         <div>
           ${isRevoked
-            ? `<span class="dash-badge warn">✗ Revoked</span>`
-            : `<span class="dash-badge ok">✓ Active</span>`}
+            ? `<span class="dash-badge warn">Revoked</span>`
+            : `<span class="dash-badge ok">Active</span>`}
           ${reissueBadge}
         </div>
       </div>
@@ -1329,9 +1432,9 @@ async function renderStudentDashboard(addr: string): Promise<void> {
         <span class="k">Hash</span><span class="v cred-hash">${credHash}</span>
       </div>
       <div class="cred-actions">
-        <button class="btn-dl"     onclick="studentDownload('${credHash}', this)">⬇ Download PDF</button>
-        <button class="btn-holder" onclick="toggleGrantForm('${sh}')">⛓ Manage Access</button>
-        <button class="btn-mail"   onclick="requestReissuance('${credHash}', '${issuerAddr}')" ${reissueBtnDisabled}>✉ Request Re-issuance</button>
+        <button class="btn-dl"     onclick="studentDownload('${credHash}', this)">Download PDF</button>
+        <button class="btn-holder" onclick="toggleGrantForm('${sh}')">Manage Access</button>
+        <button class="btn-mail"   onclick="requestReissuance('${credHash}', '${issuerAddr}')" ${reissueBtnDisabled}>Request Re-issuance</button>
       </div>
       <div id="grantForm_${sh}" class="cred-grant-form">
         <input id="grantVerifier_${sh}" placeholder="Verifier address 0x…" />
@@ -1369,7 +1472,7 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     const head = document.createElement("h3");
     head.className = "cred-school-head";
     head.innerHTML =
-      `🏛 ${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
+      `${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
     group.appendChild(head);
 
     for (const i of indices) group.appendChild(buildCard(issuedLogs[i], i));
@@ -1653,7 +1756,7 @@ function renderPendingReissues(addr: string): void {
     const ageMin    = Math.max(0, Math.round((Date.now() - req.requestedAt) / 60000));
     const pdfNote   = req.pdfCid
       ? `Original PDF: <span class="cred-hash">${req.pdfCid}</span>`
-      : `<strong style="color: var(--error-b)">⚠️ Legacy credential — issuer must upload a fresh PDF on approval.</strong>`;
+      : `<strong style="color: var(--error-b)">Legacy credential - issuer must upload a fresh PDF on approval.</strong>`;
 
     const card = document.createElement("div");
     card.className = "reissue-req-card";
@@ -1664,7 +1767,7 @@ function renderPendingReissues(addr: string): void {
           <strong>From ${escapeHtml(holderTxt)}</strong>
           <div style="font-size:0.72rem; color: var(--muted)">${ageMin} min ago</div>
         </div>
-        <span class="dash-badge pending">⏳ Pending</span>
+        <span class="dash-badge pending">Pending</span>
       </div>
       <div class="rr-reason"><em>"${escapeHtml(req.reason)}"</em></div>
       <div class="rr-fields">
@@ -1677,8 +1780,8 @@ function renderPendingReissues(addr: string): void {
         <span class="k">PDF</span><span>${pdfNote}</span>
       </div>
       <div class="rr-actions">
-        <button class="btn-issuer" onclick="approveReissue('${req.id}', this)">✓ Approve & Reissue</button>
-        <button class="btn-mail"   onclick="rejectReissue('${req.id}', this)">✗ Reject</button>
+        <button class="btn-issuer" onclick="approveReissue('${req.id}', this)">Approve & Reissue</button>
+        <button class="btn-mail"   onclick="rejectReissue('${req.id}', this)">Reject</button>
       </div>
       <div id="reissueReqResult_${req.id}" class="result"></div>
     `;
@@ -1736,6 +1839,7 @@ async function approveReissue(reqId: string, btn: HTMLButtonElement): Promise<vo
       major:          f.major,
       dept:           f.dept,
       studentId:      f.studentId,
+      issuerName:     await resolveSchoolName(connectedAddr),
       degreeType,
       gradDate:       f.gradDate,
       pdfCid,
@@ -1842,10 +1946,18 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
         const res = await fetch(`${PINATA_GATEWAY}${cid}`);
         if (res.ok) meta = await res.json();
       } catch (err) { console.warn("application metadata fetch:", errMsg(err)); }
+      if (meta.name?.trim()) {
+        rememberIssuerProfile(p.applicant, {
+          name: meta.name,
+          contact: meta.contact,
+          metadataURI: p.metadataURI,
+          docCid: meta.docCid,
+        });
+      }
 
       const short   = `${p.applicant.slice(0, 8)}…${p.applicant.slice(-4)}`;
       const docLink = meta.docCid
-        ? `<a href="${PINATA_GATEWAY}${meta.docCid}" target="_blank" rel="noopener">↗ View document</a>`
+        ? `<a href="${PINATA_GATEWAY}${meta.docCid}" target="_blank" rel="noopener">View document</a>`
         : "—";
 
       return `
@@ -1855,7 +1967,7 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
               <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
               <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
             </div>
-            <span class="dash-badge pending">⏳ Pending</span>
+            <span class="dash-badge pending">Pending</span>
           </div>
           ${meta.note ? `<div class="rr-reason"><em>"${escapeHtml(meta.note)}"</em></div>` : ""}
           <div class="rr-fields">
@@ -1864,8 +1976,8 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
             <span class="k">Document</span><span>${docLink}</span>
           </div>
           <div class="rr-actions">
-            <button class="btn-issuer" onclick="approveSchoolApp('${p.applicant}', this)">✓ Approve &amp; Register</button>
-            <button class="btn-mail"   onclick="rejectSchoolApp('${p.applicant}', this)">✗ Reject</button>
+            <button class="btn-issuer" onclick="approveSchoolApp('${p.applicant}', this)">Approve &amp; Register</button>
+            <button class="btn-mail"   onclick="rejectSchoolApp('${p.applicant}', this)">Reject</button>
           </div>
           <div id="schoolAppResult_${p.applicant}" class="result"></div>
         </div>`;
@@ -1976,7 +2088,7 @@ async function renderPendingStudentApps(adminAddr: string): Promise<void> {
               <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
               <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
             </div>
-            <span class="dash-badge pending">⏳ Pending</span>
+            <span class="dash-badge pending">Pending</span>
           </div>
           <div class="rr-fields">
             <span class="k">School</span><span>${escapeHtml(meta.school ?? "—")}</span>
@@ -1984,8 +2096,8 @@ async function renderPendingStudentApps(adminAddr: string): Promise<void> {
             <span class="k">Wallet</span><span class="cred-hash">${escapeHtml(p.applicant)}</span>
           </div>
           <div class="rr-actions">
-            <button class="btn-issuer" onclick="approveStudentApp('${p.applicant}', this)">✓ Approve &amp; Register</button>
-            <button class="btn-mail"   onclick="rejectStudentApp('${p.applicant}', this)">✗ Reject</button>
+            <button class="btn-issuer" onclick="approveStudentApp('${p.applicant}', this)">Approve &amp; Register</button>
+            <button class="btn-mail"   onclick="rejectStudentApp('${p.applicant}', this)">Reject</button>
           </div>
           <div id="studentAppResult_${p.applicant}" class="result"></div>
         </div>`;
@@ -2051,10 +2163,10 @@ async function rejectStudentApp(addr: string, btn: HTMLButtonElement): Promise<v
 function adminRow(addr: string, isOwnerRow: boolean, viewerIsOwner: boolean): string {
   const short = `${addr.slice(0, 8)}…${addr.slice(-4)}`;
   const badge = isOwnerRow
-    ? '<span class="dash-badge success">👑 Owner</span>'
-    : '<span class="dash-badge">🛡 Admin</span>';
+    ? '<span class="dash-badge success">Owner</span>'
+    : '<span class="dash-badge">Admin</span>';
   const removeBtn = (viewerIsOwner && !isOwnerRow)
-    ? `<button class="btn-mail" onclick="removeAdminWallet('${addr}', this)">✗ Remove</button>`
+    ? `<button class="btn-mail" onclick="removeAdminWallet('${addr}', this)">Remove</button>`
     : "";
   return `
     <div class="reissue-req-card" id="adminRow_${addr}">
@@ -2352,10 +2464,10 @@ async function renderPublicResult(
     const head = document.createElement("h3");
     head.className = "cred-school-head";
     head.innerHTML =
-      `🏛 ${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
+      `${escapeHtml(names[gi])} <span class="cred-school-addr">${escapeHtml(shortAddr(issuerAddr))}</span>`;
     group.appendChild(head);
 
-    for (const i of indices) group.appendChild(buildPublicCard(entries[i], metas[i], pinNames[i]));
+    for (const i of indices) group.appendChild(buildPublicCard(entries[i], metas[i], pinNames[i], names[gi]));
     container.appendChild(group);
   });
 
@@ -2368,13 +2480,27 @@ async function renderPublicResult(
 }
 
 // One read-only credential card for the public result page.
-function buildPublicCard(entry: PublicCredEntry, meta: CredMeta, pinName: string | null): HTMLElement {
+function buildPublicCard(
+  entry: PublicCredEntry,
+  meta: CredMeta,
+  pinName: string | null,
+  resolvedIssuerName: string,
+): HTMLElement {
   const { title, subtitle } = cardTitleFromMeta(meta, entry.credHash, { pinName });
+  const metadataIssuerName = meta.kind === "json" ? meta.issuerName?.trim() ?? "" : "";
+  const issuerName = metadataIssuerName || resolvedIssuerName;
+  const issuerIsAddressFallback = issuerName.toLowerCase().startsWith("0x");
+  const cardTitle = issuerName && !issuerIsAddressFallback
+    ? `${issuerName} - ${title}`
+    : title;
+  const institutionRow = issuerName && !issuerIsAddressFallback
+    ? `<span class="k">Institution</span><span class="v">${escapeHtml(issuerName)}</span>`
+    : "";
 
   let badge: string;
-  if (entry.status === "REVOKED")             badge = `<span class="dash-badge warn">✗ Revoked</span>`;
-  else if (entry.status === "ISSUER INVALID") badge = `<span class="dash-badge warn">⚠ Issuer not registered</span>`;
-  else                                        badge = `<span class="dash-badge ok">✓ Active</span>`;
+  if (entry.status === "REVOKED")             badge = `<span class="dash-badge warn">Revoked</span>`;
+  else if (entry.status === "ISSUER INVALID") badge = `<span class="dash-badge warn">Issuer not registered</span>`;
+  else                                        badge = `<span class="dash-badge ok">Active</span>`;
 
   // Diploma PDF — prefer the sidecar/legacy pdfCid, else the raw metadata URI.
   let diplomaCid = "";
@@ -2385,10 +2511,10 @@ function buildPublicCard(entry: PublicCredEntry, meta: CredMeta, pinName: string
     ? `<span class="k">Graduated</span><span class="v">${escapeHtml(meta.gradDate)}</span>`
     : "";
   const diplomaRow = diplomaCid
-    ? `<span class="k">Diploma</span><span class="v"><a href="${PINATA_GATEWAY}${escapeHtml(diplomaCid)}" target="_blank" rel="noopener">↗ View PDF</a></span>`
+    ? `<span class="k">Diploma</span><span class="v"><a href="${PINATA_GATEWAY}${escapeHtml(diplomaCid)}" target="_blank" rel="noopener">View PDF</a></span>`
     : "";
   const txRow = entry.txHash
-    ? `<span class="k">Event</span><span class="v"><a href="${ETHERSCAN_TX}${escapeHtml(entry.txHash)}" target="_blank" rel="noopener">↗ View on Etherscan</a></span>`
+    ? `<span class="k">Event</span><span class="v"><a href="${ETHERSCAN_TX}${escapeHtml(entry.txHash)}" target="_blank" rel="noopener">View on Etherscan</a></span>`
     : "";
 
   const card = document.createElement("div");
@@ -2397,7 +2523,7 @@ function buildPublicCard(entry: PublicCredEntry, meta: CredMeta, pinName: string
   card.innerHTML = `
     <div class="cred-title">
       <div>
-        <h4>${escapeHtml(title)}</h4>
+        <h4>${escapeHtml(cardTitle)}</h4>
         <div class="cred-subtitle">${escapeHtml(subtitle)}</div>
       </div>
       <div>${badge}</div>
@@ -2405,6 +2531,7 @@ function buildPublicCard(entry: PublicCredEntry, meta: CredMeta, pinName: string
     <div class="cred-meta">
       <span class="k">Issued</span><span class="v">${escapeHtml(entry.issuedDate)}</span>
       ${gradRow}
+      ${institutionRow}
       <span class="k">Issuer</span><span class="v cred-hash">${escapeHtml(entry.issuer)}</span>
       <span class="k">Hash</span><span class="v cred-hash">${escapeHtml(entry.credHash)}</span>
       ${diplomaRow}

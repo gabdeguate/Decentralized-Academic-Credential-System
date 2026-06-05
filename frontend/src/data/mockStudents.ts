@@ -99,5 +99,9 @@ export const MOCK_STUDENTS: MockStudent[] = [
 ];
 
 export const MOCK_ISSUERS: MockIssuer[] = [
-  // { name: "MIT Registrar", walletAddress: "0x…", email: "registrar@mit.edu" },
+  {
+    name: "University Registrar",
+    walletAddress: "0x4e870658dFE2688f588D389AFBfb69f705e05125",
+    email: "registrar@example.edu",
+  },
 ];
