@@ -243,9 +243,18 @@ the admin and has no application on file, the dashboard gracefully falls back to
 showing its short address.
 
 Each diploma card also lets the student **download the PDF**, **manage who can see it**,
-and **request a re-issuance** — for example if a name or major was misspelled. The
-request appears in the issuing school's dashboard, where the school can correct the
-details and issue a fresh diploma in one click.
+and **request a re-issuance** — for example to get a fresh copy after an old one was
+revoked. Importantly, the student **cannot change any diploma details**: the degree,
+major, dates, and everything else stay locked. They fill in only a short **reason** for
+the request. That request appears in the issuing school's dashboard; when the school
+approves, it **revokes the old diploma and issues a brand-new one with the exact same
+details**. Anyone who later looks up that student's wallet sees **both** copies — the old
+one marked *Revoked* and the new one marked *Active*, each with its issue date — so the
+most recent valid diploma is always clear.
+
+(Behind the scenes, the blockchain refuses to store the same fingerprint twice, even
+after a diploma is revoked. So the student's reason is mixed into the fingerprint, giving
+the new copy its own unique code while keeping every diploma detail identical.)
 
 > **In one line:** one student, many schools, one tidy view — grouped and labeled in
 > plain English.
@@ -288,6 +297,9 @@ Putting it all together, here is the journey of a single diploma:
 6. **Employer verifies** → gets ✅ valid, and can download the same PDF to read it.
 7. *(If needed)* **School revokes** the diploma → it permanently shows as invalid to
    everyone.
+8. *(If needed)* **Student requests a re-issuance** — reason only, all details locked →
+   the school approves → the old copy is revoked and an identical new copy is issued.
+   Both appear under the student's wallet: old as *Revoked*, new as *Active*.
 
 Every step above is enforced by code and recorded on a public, unchangeable ledger.
 
@@ -322,4 +334,5 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 | **Admin / Owner** | Admins approve schools & students; the owner is the head admin who can appoint other admins |
 | **onlyAdmin / onlyOwner** | A rule that lets only an admin (or only the owner) run a function |
 | **Revoke** | Permanently mark a diploma (or an access grant) as no longer valid |
+| **Re-issuance** | Student asks for a fresh copy (reason only, details locked); school revokes the old and issues an identical new one |
 | **Sepolia** | Ethereum's free practice network we deployed on |

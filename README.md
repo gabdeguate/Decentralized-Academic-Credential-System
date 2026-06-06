@@ -215,10 +215,25 @@ A single-page app (`frontend/`) that talks to both contracts via ethers v6 and M
 
 - **Wallet-first login + role routing.** On connect, the app reads the chain (`isAdmin`, `isRegisteredIssuer`, `isRegisteredStudent`, credential events) and routes you to the right dashboard automatically. Admins are recognized on-chain **and** via a frontend allowlist (`ADMIN_ADDRESSES` in `config.ts`) so the right wallet reaches the admin view even before it's seeded on-chain. A wallet matching more than one role is sent to a "multiple roles" notice.
 - **Admin dashboard.** Lists pending school and student applications with approve/reject (reason); a "Register Issuer Manually" form; and an owner-only **Manage Admins** panel to add/remove admins.
-- **Issuer (school) dashboard.** Issue a credential (compute hash → upload PDF + JSON sidecar to Pinata → `issueCredential`), revoke credentials, and act on student re-issuance requests.
-- **Student (holder) dashboard.** Every credential issued to the wallet, **grouped by issuing university** (shown by readable name, resolved from the school's application), with download PDF, manage verifier access, and request re-issuance per card.
+- **Issuer (school) dashboard.** Issue a credential (compute hash → upload PDF + JSON sidecar to Pinata → `issueCredential`), revoke credentials, and approve/reject student re-issuance requests (approve = revoke-old + issue-new; see [Re-issuance](#re-issuance)).
+- **Student (holder) dashboard.** Every credential issued to the wallet, **grouped by issuing university** (shown by readable name, resolved from the school's application), with download PDF, manage verifier access, and request re-issuance per card (**reason only** — diploma details stay locked).
 - **Verifier (employer) dashboard.** Re-enter the diploma details, the page rebuilds the same fingerprint, and `verifyCredential` returns ✅/❌.
 - **Public credential lookup (no wallet).** The landing page has a "Verify a Credential" search: paste a wallet address → a full results page (student-dashboard style) grouped by university, each card showing the degree, a **View PDF** link, a **View on Etherscan** link to the issuance transaction, and a status badge (Active / Revoked / Issuer not registered). Read-only via a public RPC; no MetaMask required.
+
+### Re-issuance
+
+A student can request a fresh copy of a credential **without altering any diploma data**. In the request modal every diploma field (degree level, department, major, student ID, graduation date) is locked — the student supplies only a **reason** (≥10 chars). The request is queued for the issuing school (`reissueQueue.ts`); on **approval** the school **revokes the old credential and issues a new one carrying identical diploma data**.
+
+The contract permanently rejects re-issuing an identical hash — even after revocation, `issuedAt` is never reset (`Credential.sol`). So the reason (salted with the request timestamp) is folded into the fingerprint, giving the reissued credential a unique hash:
+
+```ts
+reissueHash = solidityPackedKeccak256(
+  ["address", "string", "string", "string"],
+  [holder, degreeType, gradDate, reason + "\n#" + requestedAt]
+);
+```
+
+The new IPFS sidecar records `reason` and `reissuedFrom` (the old hash). Verification stays **wallet-lookup based**: searching the student's wallet returns **both** credentials — old = **Revoked**, reissued = **Active**, each with its Issued date — so the most recent valid diploma is always identifiable. (Manual detail re-entry in the Verifier dashboard can't reproduce a reissued hash, since the reason isn't shared with the verifier; wallet/public lookup is the path for reissued credentials.)
 
 Key frontend files: `frontend/src/main.ts` (all views + routing + contract calls), `frontend/src/config.ts` (addresses, ABIs, RPC endpoints, admin allowlist), `frontend/src/utils/ipfs.ts` (Pinata upload/lookup), `frontend/src/utils/reissueQueue.ts` (local re-issuance request queue), `frontend/src/data/mockStudents.ts` (degree-level/department/major option lists).
 
@@ -246,6 +261,13 @@ Key frontend files: `frontend/src/main.ts` (all views + routing + contract calls
 8.  School →  Credential.revokeCredential(hash)           → verify returns (false, "Credential revoked")
 9.  Admin  →  Registry.revokeIssuer(schoolAddr)           → verify returns (false, "Issuer no longer registered")
                                                              for ALL that school's credentials
+
+──── Re-issuance (reason only, identical diploma) ────
+R1. Student → request re-issuance (reason only; diploma fields locked)  [off-chain queue]
+R2. School  → approve → revokeCredential(oldHash)
+                      → issueCredential(holder, reissueHash, "ipfs://CID")
+                        reissueHash = keccak(holder, sameDegreeType, sameGradDate, reason+ts)
+            → wallet lookup now shows old = Revoked, new = Active (newest = valid)
 ```
 
 ---
