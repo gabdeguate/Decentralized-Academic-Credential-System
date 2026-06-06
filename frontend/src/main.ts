@@ -11,6 +11,7 @@ import {
   REGISTRY_ADDRESS,
   CREDENTIAL_ADDRESS,
   SEPOLIA_CHAIN_ID,
+  DEPLOY_BLOCK,
   SEPOLIA_RPC_URL,
   SEPOLIA_RPC_FALLBACKS,
   ETHERSCAN_TX,
@@ -206,9 +207,10 @@ async function renderIssuerCredentials(addr: string): Promise<void> {
   }
 
   let issuedLogs: EventLog[] = [];
+  const latestBlock = await provider.getBlockNumber();
   try {
     const filter = (credential as Contract).filters.CredentialIssued(null, addr, null);
-    issuedLogs   = (await (credential as Contract).queryFilter(filter, 0, "latest")) as EventLog[];
+    issuedLogs   = await queryFilterSafe(credential as Contract, filter, latestBlock);
   } catch (e) {
     container.innerHTML = `<div class="empty-state">Failed to load credentials: ${errMsg(e)}</div>`;
     return;
@@ -232,7 +234,7 @@ async function renderIssuerCredentials(addr: string): Promise<void> {
     const h = ev.args[0] as string;
     try {
       const revFilter = (credential as Contract).filters.CredentialRevoked(h);
-      const revLogs   = await (credential as Contract).queryFilter(revFilter, 0, "latest");
+      const revLogs   = await queryFilterSafe(credential as Contract, revFilter, latestBlock);
       if (revLogs.length > 0) revokedSet.add(h);
     } catch (e) {
       console.warn(`Revoke check for ${h.slice(0, 10)}… failed:`, errMsg(e));
@@ -308,15 +310,16 @@ async function detectAndRoute(addr: string): Promise<void> {
   }
 
   // Parallel reads — each guarded so a single RPC failure can't block routing.
+  const latestBlock = await provider!.getBlockNumber();
   const isIssuerP = (registry   as Contract).isRegisteredIssuer(addr)
                       .catch((e: unknown) => { console.warn("isRegisteredIssuer:", errMsg(e)); return false; });
   const ownerP    = (registry   as Contract).owner()
                       .catch((e: unknown) => { console.warn("owner:", errMsg(e)); return ""; });
-  const issuedP   = (credential as Contract).queryFilter(
-                      (credential as Contract).filters.CredentialIssued(null, null, addr), 0, "latest")
+  const issuedP   = queryFilterSafe(credential as Contract,
+                      (credential as Contract).filters.CredentialIssued(null, null, addr), latestBlock)
                       .catch((e: unknown) => { console.warn("CredentialIssued query:", errMsg(e)); return []; });
-  const grantedP  = (credential as Contract).queryFilter(
-                      (credential as Contract).filters.VerifierAccessGranted(null, null, addr), 0, "latest")
+  const grantedP  = queryFilterSafe(credential as Contract,
+                      (credential as Contract).filters.VerifierAccessGranted(null, null, addr), latestBlock)
                       .catch((e: unknown) => { console.warn("VerifierAccessGranted query:", errMsg(e)); return []; });
   const reqStatP  = (registry   as Contract).issuerRequestStatus(addr)
                       .catch((e: unknown) => { console.warn("issuerRequestStatus:", errMsg(e)); return 0; });
@@ -515,7 +518,8 @@ async function loadRejectionReason(addr: string, role: "student" | "school"): Pr
     const filter = role === "student"
       ? (registry as Contract).filters.StudentRequestRejected(addr)
       : (registry as Contract).filters.IssuerRequestRejected(addr);
-    const logs = await (registry as Contract).queryFilter(filter, 0, "latest");
+    const latestBlock = await provider!.getBlockNumber();
+    const logs = await queryFilterSafe(registry as Contract, filter, latestBlock);
     const last = logs[logs.length - 1] as EventLog | undefined;
     const reason = last?.args?.reason as string | undefined;
     if (reason) setText("signupRejectedReason", `Reason: ${reason}`);
@@ -706,6 +710,24 @@ function computeCredentialHash(
   return solidityPackedKeccak256(
     ["address", "string", "string"],
     [studentAddress, degreeType, graduationDate]
+  );
+}
+
+// Re-issuance hash — identical diploma data (degreeType + graduationDate) but a
+// 4th `reason` element so the new credential gets a unique hash. The contract
+// permanently blocks reusing an existing hash (even after revoke), so a reissue
+// of unchanged diploma data must vary something; folding in the student's reason
+// (salted with the request timestamp) does it. Verifiers use wallet lookup, not
+// hash recompute, so this 4th element never needs to be reproduced.
+function computeReissueHash(
+  studentAddress: string,
+  degreeType: string,
+  graduationDate: string,
+  reason: string
+): string {
+  return solidityPackedKeccak256(
+    ["address", "string", "string", "string"],
+    [studentAddress, degreeType, graduationDate, reason]
   );
 }
 
@@ -1177,9 +1199,10 @@ async function loadDashboardDetails(credHash: string): Promise<void> {
   const issuedFilter  = (credential as Contract).filters.CredentialIssued(credHash);
   const revokedFilter = (credential as Contract).filters.CredentialRevoked(credHash);
 
+  const latestBlock = await provider.getBlockNumber();
   const [issuedLogs, revokedLogs] = await Promise.all([
-    (credential as Contract).queryFilter(issuedFilter,  0, "latest"),
-    (credential as Contract).queryFilter(revokedFilter, 0, "latest"),
+    queryFilterSafe(credential as Contract, issuedFilter,  latestBlock),
+    queryFilterSafe(credential as Contract, revokedFilter, latestBlock),
   ]);
 
   // ── CredentialIssued ──────────────────────────────────────────────────────
@@ -1433,9 +1456,10 @@ async function renderStudentDashboard(addr: string): Promise<void> {
 
   // Issued credentials where this wallet is the holder
   let issuedLogs: EventLog[] = [];
+  const latestBlock = await provider.getBlockNumber();
   try {
     const filter = (credential as Contract).filters.CredentialIssued(null, null, addr);
-    issuedLogs   = (await (credential as Contract).queryFilter(filter, 0, "latest")) as EventLog[];
+    issuedLogs   = await queryFilterSafe(credential as Contract, filter, latestBlock);
   } catch (e) {
     container.innerHTML = `<div class="empty-state">Failed to load credentials: ${errMsg(e)}</div>`;
     return;
@@ -1458,7 +1482,7 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     const h = ev.args[0] as string;
     try {
       const revFilter = (credential as Contract).filters.CredentialRevoked(h);
-      const revLogs   = await (credential as Contract).queryFilter(revFilter, 0, "latest");
+      const revLogs   = await queryFilterSafe(credential as Contract, revFilter, latestBlock);
       if (revLogs.length > 0) revokedSet.add(h);
     } catch (e) {
       console.warn(`Revoke check for ${h.slice(0, 10)}… failed:`, errMsg(e));
@@ -1758,8 +1782,6 @@ async function studentRevokeAccess(credHash: string, btn: HTMLButtonElement): Pr
 // sidecar (or blank for legacy creds). Submission writes to the localStorage
 // queue; the issuer dashboard picks it up on the next login.
 
-let currentReissueSidecar: { level?: string; major?: string; dept?: string; studentId?: string; gradDate?: string } = {};
-
 async function requestReissuance(credHash: string, issuerAddr: string): Promise<void> {
   const modal = document.getElementById("reissueModal");
   if (!modal) return;
@@ -1772,38 +1794,35 @@ async function requestReissuance(credHash: string, issuerAddr: string): Promise<
   setResult("reissueModalResult", "pending", "🔎 Loading current credential details…");
   modal.classList.add("show");
 
-  currentReissueSidecar = {};
+  // Submit is enabled only once the original diploma fields are loaded (locked).
+  const submitBtn = document.getElementById("reissueSubmitBtn") as HTMLButtonElement | null;
+  if (submitBtn) submitBtn.disabled = true;
 
-  // Best-effort prefill from current sidecar
+  // Load the original diploma fields and lock them — the student may only edit
+  // the reason. Identical diploma data is reissued; the reason makes the hash unique.
   try {
     if (!credential) throw new Error("Wallet not connected.");
     const uri  = await (credential as Contract).getMetadataURI(credHash);
     const meta = await fetchCredentialMetadata(uri);
     if (meta.kind === "json") {
-      currentReissueSidecar = {
-        level:     meta.level,
-        major:     meta.major,
-        dept:      meta.dept,
-        studentId: meta.studentId,
-        gradDate:  meta.gradDate,
-      };
       (document.getElementById("reissuePdfCid")    as HTMLInputElement).value = meta.pdfCid;
       (document.getElementById("reissueLevel")     as HTMLSelectElement).value = meta.level   ?? "";
       (document.getElementById("reissueDept")      as HTMLSelectElement).value = meta.dept    ?? "";
-      refreshMajors("reissue");
+      // Set the major value directly — fields stay locked, so we skip refreshMajors
+      // (it would re-enable and could clear the field).
       (document.getElementById("reissueMajor")     as HTMLInputElement).value = meta.major     ?? "";
       (document.getElementById("reissueStudentId") as HTMLInputElement).value = meta.studentId ?? "";
       (document.getElementById("reissueGradDate")  as HTMLInputElement).value = meta.gradDate  ?? "";
-      setResult("reissueModalResult", "success", "✅ Loaded current fields — edit any value, then submit.");
-    } else if (meta.kind === "pdf-legacy") {
-      (document.getElementById("reissuePdfCid")    as HTMLInputElement).value = meta.pdfCid;
-      setResult("reissueModalResult", "pending",
-        "⚠️ Legacy credential — no structured fields stored. Fill in the new fields below.");
+      if (submitBtn) submitBtn.disabled = false;
+      setResult("reissueModalResult", "success", "✅ Diploma details locked — enter the reason, then submit.");
     } else {
-      setResult("reissueModalResult", "pending", "⚠️ No sidecar found — fill in the new fields below.");
+      // Legacy / no sidecar: original diploma fields are unknown, so an identical
+      // reissue is impossible. Block the request.
+      setResult("reissueModalResult", "error",
+        "⚠️ Original diploma data unavailable for this credential — re-issuance not supported.");
     }
   } catch (e) {
-    setResult("reissueModalResult", "error", `⚠️ Could not prefill: ${errMsg(e)}. Fill in manually.`);
+    setResult("reissueModalResult", "error", `⚠️ Could not load original diploma: ${errMsg(e)}.`);
   }
 }
 
@@ -1838,18 +1857,8 @@ function submitReissueRequest(btn: HTMLButtonElement): void {
       if (v.includes("|")) throw new Error(`Field "${name}" cannot contain the | character.`);
     }
 
-    // Require at least one field to differ from the current sidecar — otherwise
-    // the new hash would collide with the existing on-chain hash.
-    const cur = currentReissueSidecar;
-    if (cur.level !== undefined) {
-      const same =
-        cur.level === level &&
-        cur.dept  === dept  &&
-        cur.major === major &&
-        cur.studentId === studentId &&
-        cur.gradDate  === gradDate;
-      if (same) throw new Error("Edit at least one field — the new credential needs a different hash.");
-    }
+    // Diploma fields are locked (identical to the original); the reason makes the
+    // reissued credential's hash unique, so no "must differ" check is needed.
 
     const id: string = `${Date.now()}-${credHash.slice(2, 10)}`;
     const req: ReissueReq = {
@@ -1961,9 +1970,12 @@ async function approveReissue(reqId: string, btn: HTMLButtonElement): Promise<vo
 
     const f          = req.newFields;
     const degreeType = `${f.level}|${f.major}|${f.dept}|${f.studentId}`;
-    const newHash    = computeCredentialHash(req.holderAddr, degreeType, f.gradDate);
+    // Identical diploma data; the reason (salted with the request timestamp) makes
+    // the reissued hash unique so the contract won't reject it as already existing.
+    const saltedReason = `${req.reason}\n#${req.requestedAt}`;
+    const newHash      = computeReissueHash(req.holderAddr, degreeType, f.gradDate, saltedReason);
     if (newHash.toLowerCase() === req.credHash.toLowerCase()) {
-      throw new Error("New fields produce the same hash as the original — request rejected by hash check.");
+      throw new Error("New hash collides with the original — request rejected by hash check.");
     }
 
     // Legacy: must upload a fresh PDF before pinning the sidecar.
@@ -1990,6 +2002,7 @@ async function approveReissue(reqId: string, btn: HTMLButtonElement): Promise<vo
       pdfCid,
       pinnedAt:       new Date().toISOString(),
       reissuedFrom:   req.credHash,
+      reason:         req.reason,
     };
     const jsonCid = await uploadJsonToPinata(sidecar, `dacs-reissue-${reqId}`);
 
@@ -2000,7 +2013,13 @@ async function approveReissue(reqId: string, btn: HTMLButtonElement): Promise<vo
       await tx1.wait();
     } catch (e) {
       const msg = errMsg(e);
-      if (!/already revoked/i.test(msg) && !/CredentialAlreadyRevoked/i.test(msg)) {
+      // 0xaac64f45 = CredentialAlreadyRevoked selector (ethers may fail to decode
+      // it if the cached bundle's ABI is stale → falls through as "unknown custom error").
+      const alreadyRevoked =
+        /already revoked/i.test(msg) ||
+        /CredentialAlreadyRevoked/i.test(msg) ||
+        /0xaac64f45/i.test(msg);
+      if (!alreadyRevoked) {
         throw new Error(`Revoke failed: ${msg}`);
       }
       console.warn("Old credential already revoked — continuing.");
@@ -2060,8 +2079,9 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
   container.textContent = "Loading…";
 
   try {
-    const logs = await (registry as Contract).queryFilter(
-      (registry as Contract).filters.IssuerRequested(), 0, "latest");
+    const latestBlock = await provider!.getBlockNumber();
+    const logs = await queryFilterSafe(registry as Contract,
+      (registry as Contract).filters.IssuerRequested(), latestBlock);
 
     // Latest request per applicant (logs come back chronological → last wins).
     const latest = new Map<string, EventLog>();
@@ -2192,8 +2212,9 @@ async function renderPendingStudentApps(adminAddr: string): Promise<void> {
   container.textContent = "Loading…";
 
   try {
-    const logs = await (registry as Contract).queryFilter(
-      (registry as Contract).filters.StudentRequested(), 0, "latest");
+    const latestBlock = await provider!.getBlockNumber();
+    const logs = await queryFilterSafe(registry as Contract,
+      (registry as Contract).filters.StudentRequested(), latestBlock);
 
     // Latest request per applicant (logs come back chronological → last wins).
     const latest = new Map<string, EventLog>();
@@ -2346,8 +2367,9 @@ async function renderManageAdmins(adminAddr: string, isOwner: boolean): Promise<
     const ownerAddr = (await (registry as Contract).owner()) as string;
     const ownerLower = ownerAddr.toLowerCase();
 
-    const addedLogs = await (registry as Contract).queryFilter(
-      (registry as Contract).filters.AdminAdded(), 0, "latest");
+    const latestBlock = await provider!.getBlockNumber();
+    const addedLogs = await queryFilterSafe(registry as Contract,
+      (registry as Contract).filters.AdminAdded(), latestBlock);
 
     // Candidates from history (lowercase → checksummed display), minus the owner.
     const candidates = new Map<string, string>();
@@ -2445,25 +2467,44 @@ interface PublicCredEntry {
 }
 
 /**
- * queryFilterSafe — public RPCs often cap eth_getLogs block range.
- * Starts with a large window and halves it on failure until it works.
+ * queryFilterSafe — public RPCs cap eth_getLogs by block range (publicnode = 50k)
+ * and by result count. Scan the full contract history from DEPLOY_BLOCK in capped
+ * windows, halving any window the RPC rejects, and aggregate every matching log.
  */
+const MAX_LOG_RANGE = 45_000; // under the common 50k eth_getLogs range cap
+
+// Query one [from, to] window, recursively halving it on RPC range/size errors.
+async function queryFilterChunk(
+  contract: Contract,
+  filter: ReturnType<Contract["filters"][string]>,
+  from: number,
+  to: number,
+): Promise<EventLog[]> {
+  try {
+    return (await contract.queryFilter(filter, from, to)) as EventLog[];
+  } catch (e) {
+    if (from >= to) throw e; // single block can't be split — a real error
+    const mid = Math.floor((from + to) / 2);
+    console.warn(`[DACS] queryFilter ${from}-${to} failed, halving`);
+    const [a, b] = await Promise.all([
+      queryFilterChunk(contract, filter, from, mid),
+      queryFilterChunk(contract, filter, mid + 1, to),
+    ]);
+    return [...a, ...b];
+  }
+}
+
 async function queryFilterSafe(
   contract: Contract,
   filter: ReturnType<Contract["filters"][string]>,
   latestBlock: number,
 ): Promise<EventLog[]> {
-  // Try progressively smaller ranges: full history → 500k → 250k → 100k → 50k
-  const ranges = [latestBlock, 500_000, 250_000, 100_000, 50_000];
-  for (const range of ranges) {
-    const from = Math.max(0, latestBlock - range);
-    try {
-      return (await contract.queryFilter(filter, from, latestBlock)) as EventLog[];
-    } catch {
-      console.warn(`[DACS] queryFilter failed for range ${from}–${latestBlock}, trying smaller`);
-    }
+  const out: EventLog[] = [];
+  for (let from = DEPLOY_BLOCK; from <= latestBlock; from += MAX_LOG_RANGE) {
+    const to = Math.min(from + MAX_LOG_RANGE - 1, latestBlock);
+    out.push(...(await queryFilterChunk(contract, filter, from, to)));
   }
-  throw new Error("All block-range attempts failed. The RPC may be overloaded — try again later.");
+  return out;
 }
 
 async function publicLookup(btn: HTMLButtonElement): Promise<void> {

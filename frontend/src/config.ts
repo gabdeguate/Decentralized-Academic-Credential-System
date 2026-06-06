@@ -19,6 +19,12 @@ export const SEPOLIA_RPC_FALLBACKS: readonly string[] = [
 ];
 
 export const SEPOLIA_CHAIN_ID = 11155111n;
+
+// Block at/just before the current contracts were deployed (Registry creation
+// ~10,975,291). Lower bound for event scans so queryFilterSafe chunks the live
+// range instead of all ~11M Sepolia blocks. Update on each contract redeploy.
+export const DEPLOY_BLOCK = 10970000;
+
 export const ETHERSCAN_TX    = "https://sepolia.etherscan.io/tx/";
 export const PINATA_GATEWAY  = "https://gateway.pinata.cloud/ipfs/";
 

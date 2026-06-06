@@ -1166,6 +1166,12 @@
       margin-bottom: 16px;
     }
 
+    .muted {
+      color: var(--muted);
+      font-weight: 400;
+      font-size: 0.85em;
+    }
+
     .modal-actions {
       display: flex;
       gap: 10px;
@@ -1697,8 +1703,8 @@
   <div class="modal-content">
     <h3>Request Re-issuance</h3>
     <p class="modal-sub">
-      Edit the degree fields and explain why. The issuer will see this in their
-      dashboard on their next login and can approve in one click.
+      Your diploma is reissued exactly as originally issued — the details below are
+      locked. Just tell the issuer why you need it reissued. They approve in one click.
     </p>
 
     <input type="hidden" id="reissueCredHash" />
@@ -1706,27 +1712,27 @@
     <input type="hidden" id="reissuePdfCid" />
 
     <label>Reason for Re-issuance</label>
-    <textarea id="reissueReason" rows="3" placeholder="e.g., Major name corrected from CS to Computer Science"></textarea>
+    <textarea id="reissueReason" rows="3" placeholder="e.g., Lost access to my diploma / wallet recovered — please reissue"></textarea>
 
-    <label>Student ID</label>
-    <input id="reissueStudentId" placeholder="e.g., 20240417" />
+    <label>Student ID <span class="muted">(locked — same as original)</span></label>
+    <input id="reissueStudentId" readonly />
 
-    <label>Degree Level</label>
-    <select id="reissueLevel"></select>
+    <label>Degree Level <span class="muted">(locked)</span></label>
+    <select id="reissueLevel" disabled></select>
 
-    <label>Department</label>
-    <select id="reissueDept" onchange="refreshMajors('reissue')"></select>
+    <label>Department <span class="muted">(locked)</span></label>
+    <select id="reissueDept" disabled></select>
 
-    <label>Major</label>
-    <input id="reissueMajor" list="reissueMajorsList" placeholder="Select department first…" disabled />
+    <label>Major <span class="muted">(locked)</span></label>
+    <input id="reissueMajor" readonly />
 
-    <label>Graduation Month</label>
-    <input id="reissueGradDate" type="month" />
+    <label>Graduation Month <span class="muted">(locked)</span></label>
+    <input id="reissueGradDate" type="month" readonly />
 
     <div id="reissueModalResult" class="result"></div>
 
     <div class="modal-actions">
-      <button class="btn-issuer" onclick="submitReissueRequest(this)">Submit Request</button>
+      <button class="btn-issuer" id="reissueSubmitBtn" onclick="submitReissueRequest(this)">Submit Request</button>
       <button class="btn-mail"   onclick="closeReissueModal()">Cancel</button>
     </div>
   </div>
