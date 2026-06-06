@@ -5,746 +5,308 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DACS - Academic Credential Registry</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+    }
 
     :root {
-      --bg:        #0d0d12;
-      --surface:   #14141e;
-      --card:      #1c1c2a;
-      --border:    #2a2a3e;
-      --accent:    #6c63ff;
-      --accent2:   #00d4aa;
-      --text:      #e0e0f0;
-      --muted:     #8080a0;
-      --success:   #1a3a2a;
-      --success-b: #00d4aa;
-      --error:     #3a1a1a;
-      --error-b:   #ff6060;
-      --pending:   #1e2a3a;
-      --pending-b: #60b0ff;
-      --issuer:    #7c4dff;
-      --holder:    #00bfa5;
-      --verifier:  #ff9800;
+      --bg: #0b0f17;
+      --surface: #141a24;
+      --card: #141a24;
+      --field: #11161f;
+      --panel-head: #1a212e;
+      --surface-2: #1a212e;
+      --soft: #161d28;
+      --border: #232b3a;
+      --border-2: #313c52;
+      --divider: #1e2531;
+      --accent: #22d3ee;
+      --accent-deep: #0891b2;
+      --accent2: #60a5fa;
+      --near-black: #0e7490;
+      --text: #e5e9f0;
+      --heading: #f4f7fb;
+      --muted: #8b95a7;
+      --label: #aab3c2;
+      --section-label: #9aa4b4;
+      --meta: #6b7686;
+      --success: rgba(16, 185, 129, 0.14);
+      --success-b: #34d399;
+      --error: rgba(239, 68, 68, 0.14);
+      --error-b: #f87171;
+      --pending: rgba(245, 158, 11, 0.14);
+      --pending-b: #fbbf24;
+      --neutral: rgba(255, 255, 255, 0.06);
+      --neutral-fg: #aab3c2;
+      --issuer: #22d3ee;
+      --holder: #a78bfa;
+      --verifier: #34d399;
+      --radius: 12px;
+      --pill: 999px;
+      --shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
+      --mono-accent: #67e8f9;
+      --sans: "IBM Plex Sans", Aptos, "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    html {
+      background: var(--bg);
+      color-scheme: dark;
     }
 
     body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: var(--bg);
-      color: var(--text);
       min-height: 100vh;
       padding-bottom: 48px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      line-height: 1.45;
     }
 
-    /* ─── Header ─── */
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    a {
+      color: var(--accent2);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(96, 165, 250, 0.28);
+    }
+
+    a:hover {
+      border-bottom-color: currentColor;
+    }
+
     header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 18px 28px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
       flex-wrap: wrap;
-    }
-    .header-left h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.3px; }
-    .header-left p  { font-size: 0.77rem; color: var(--muted); margin-top: 2px; }
-    .header-left p a { color: var(--accent); text-decoration: none; }
-    .header-left p a:hover { text-decoration: underline; }
-
-    .connect-area { display: flex; align-items: center; gap: 12px; }
-    #walletStatus { font-size: 0.82rem; color: var(--muted); font-family: 'Courier New', monospace; }
-    #walletStatus.connected { color: var(--accent2); }
-
-    /* ─── Buttons ─── */
-    button {
-      cursor: pointer; border: none; border-radius: 8px;
-      font-size: 0.84rem; font-weight: 600; padding: 9px 16px;
-      transition: opacity 0.15s, transform 0.1s;
-    }
-    button:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
-    button:active:not(:disabled) { transform: translateY(0); }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    #connectBtn { background: var(--accent); color: #fff; padding: 10px 20px; }
-    #switchBtn  { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); padding: 8px 16px; font-size: 0.82rem; }
-    .btn-issuer  { background: var(--issuer);   color: #fff; width: 100%; margin-top: 10px; }
-    .btn-holder  { background: var(--holder);   color: #fff; width: 100%; margin-top: 10px; }
-    .btn-verify  { background: var(--verifier); color: #fff; width: 100%; margin-top: 10px;
-                   font-size: 0.92rem; padding: 12px; }
-    .btn-dl      { background: #0095a8; color: #fff; width: 100%; margin-top: 10px; }
-
-    /* ─── Layout ─── */
-    .panels {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 18px;
-      padding: 22px 28px 0;
-    }
-    @media (max-width: 960px) { .panels { grid-template-columns: 1fr; } }
-
-    /* ─── Panel ─── */
-    .panel {
-      background: var(--card);
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
-    .panel-header {
-      padding: 14px 18px 12px;
+      padding: 10px clamp(16px, 3vw, 32px);
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 10px;
-    }
-    .panel-icon {
-      width: 34px; height: 34px; border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1rem;
-    }
-    .panel-icon.issuer   { background: rgba(124,77,255,0.18); }
-    .panel-icon.holder   { background: rgba(0,191,165,0.18); }
-    .panel-icon.verifier { background: rgba(255,152,0,0.18); }
-    .panel-header h2 { font-size: 0.98rem; font-weight: 700; }
-    .panel-header p  { font-size: 0.75rem; color: var(--muted); margin-top: 1px; }
-    .panel-body { padding: 0 18px 18px; }
-
-    /* ─── Section ─── */
-    .section {
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid var(--border);
-    }
-    .section:first-child { border-top: none; }
-    .section h3 {
-      font-size: 0.78rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.6px;
-      color: var(--muted); margin-bottom: 10px;
-    }
-    .owner-note { font-size: 0.7rem; color: #5858a0; font-weight: 400; text-transform: none; }
-
-    /* ─── Form elements ─── */
-    label {
-      display: block; font-size: 0.76rem; color: var(--muted);
-      margin-bottom: 4px; margin-top: 9px;
-    }
-    label:first-of-type { margin-top: 0; }
-    input, textarea {
-      width: 100%; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--text); font-size: 0.82rem;
-      padding: 8px 11px; outline: none; transition: border-color 0.15s; font-family: inherit;
-    }
-    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
-    input::placeholder, textarea::placeholder { color: #50506a; }
-    textarea { resize: vertical; min-height: 56px; line-height: 1.5; }
-    select {
-      width: 100%; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--text); font-size: 0.82rem;
-      padding: 8px 11px; outline: none; transition: border-color 0.15s;
-      font-family: inherit; cursor: pointer;
-    }
-    select option { background: var(--surface); color: var(--text); }
-    .signup-form {
-      text-align: left; max-width: 340px; margin: 0 auto 18px;
-    }
-    .signup-form textarea {
-      width: 100%; resize: vertical; box-sizing: border-box;
-    }
-    .role-toggle {
-      display: flex; gap: 18px; justify-content: center; margin: 0 auto 18px;
-      font-size: 0.85rem;
-    }
-    .role-toggle label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-
-    /* File input */
-    input[type="file"] {
-      padding: 7px 10px; cursor: pointer; font-size: 0.79rem;
-    }
-    input[type="date"], input[type="month"] {
-      color-scheme: dark;
-      cursor: pointer;
-    }
-    input[type="date"]::-webkit-calendar-picker-indicator,
-    input[type="month"]::-webkit-calendar-picker-indicator {
-      filter: invert(0.7);
-      cursor: pointer;
-      opacity: 0.7;
-    }
-    input[type="date"]::-webkit-calendar-picker-indicator:hover,
-    input[type="month"]::-webkit-calendar-picker-indicator:hover {
-      opacity: 1;
-    }
-    input[type="file"]::file-selector-button {
-      background: var(--border); color: var(--text); border: none;
-      border-radius: 5px; padding: 4px 10px; margin-right: 10px;
-      cursor: pointer; font-size: 0.78rem;
-    }
-    input[type="file"]::file-selector-button:hover { background: #3a3a55; }
-
-    /* ─── Hash preview ─── */
-    .hash-preview {
-      margin-top: 6px; display: none;
-      font-family: 'Courier New', monospace; font-size: 0.67rem; color: var(--accent2);
-      background: rgba(0,212,170,0.06); border: 1px solid rgba(0,212,170,0.18);
-      border-radius: 6px; padding: 6px 9px; word-break: break-all;
-    }
-    .hash-preview-label { font-size: 0.62rem; color: var(--muted); margin-bottom: 2px; }
-
-    /* ─── Result ─── */
-    .result {
-      margin-top: 9px; padding: 9px 11px; border-radius: 8px;
-      font-size: 0.79rem; line-height: 1.6; display: none; word-break: break-all;
-    }
-    .result.show    { display: block; }
-    .result.success { background: var(--success);  border: 1px solid var(--success-b); color: #80ffcc; }
-    .result.error   { background: var(--error);    border: 1px solid var(--error-b);   color: #ff9090; }
-    .result.pending { background: var(--pending);  border: 1px solid var(--pending-b); color: #90c8ff; }
-
-    .result a {
-      color: inherit; font-family: 'Courier New', monospace;
-      font-size: 0.72rem; display: block; margin-top: 3px; opacity: 0.85;
-    }
-    .result a:hover { opacity: 1; }
-    .mono { font-family: 'Courier New', monospace; font-size: 0.7rem; opacity: 0.75; display: block; margin-top: 2px; }
-
-    /* ─── Verifier Dashboard ─── */
-    .verify-dashboard {
-      display: none;
-      margin-top: 14px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .verify-dashboard.show     { display: block; }
-    .verify-dashboard.verified { border-color: rgba(0,212,170,0.4);  box-shadow: 0 0 0 1px rgba(0,212,170,0.08); }
-    .verify-dashboard.invalid  { border-color: rgba(255,96,96,0.4);  box-shadow: 0 0 0 1px rgba(255,96,96,0.08); }
-    .verify-dashboard.errored  { border-color: rgba(255,152,0,0.35); }
-
-    .dash-status {
-      display: flex; align-items: center; gap: 16px;
-      padding: 18px 20px; border-bottom: 1px solid var(--border);
-    }
-    .dash-status.verified { background: rgba(0,212,170,0.07); }
-    .dash-status.invalid  { background: rgba(255,96,96,0.07); }
-    .dash-status.errored  { background: rgba(255,152,0,0.06); }
-
-    .dash-icon  { font-size: 2rem; line-height: 1; }
-    .dash-label { font-size: 1rem; font-weight: 800; letter-spacing: 0.4px; }
-    .dash-status.verified .dash-label { color: var(--success-b); }
-    .dash-status.invalid  .dash-label { color: var(--error-b); }
-    .dash-status.errored  .dash-label { color: var(--verifier); }
-    .dash-reason { font-size: 0.79rem; color: var(--muted); margin-top: 3px; }
-
-    .dash-grid  { padding: 4px 0 8px; }
-    .dash-row {
-      display: flex; align-items: flex-start; gap: 14px;
-      padding: 8px 20px;
-      border-bottom: 1px solid rgba(255,255,255,0.025);
-    }
-    .dash-row:last-child { border-bottom: none; }
-    .dash-row:hover      { background: rgba(255,255,255,0.02); }
-
-    .dash-key {
-      flex-shrink: 0; width: 84px;
-      font-size: 0.71rem; font-weight: 700; letter-spacing: 0.3px;
-      color: var(--muted); padding-top: 2px; text-transform: uppercase;
-    }
-    .dash-val      { font-size: 0.82rem; color: var(--text); flex: 1; word-break: break-all; }
-    .mono-val      { font-family: 'Courier New', monospace; font-size: 0.73rem; color: #c0c0e0; }
-    .dash-link     { color: var(--accent2); text-decoration: none; }
-    .dash-link:hover { text-decoration: underline; }
-
-    .dash-issuer-wrap { display: flex; flex-direction: column; gap: 5px; flex: 1; }
-    .dash-badge {
-      display: inline-flex; align-items: center; gap: 4px;
-      font-size: 0.67rem; font-weight: 700; padding: 2px 9px;
-      border-radius: 4px; width: fit-content;
-    }
-    .dash-badge.ok   { background: rgba(0,212,170,0.14); color: var(--success-b); border: 1px solid rgba(0,212,170,0.25); }
-    .dash-badge.warn { background: rgba(255,96,96,0.14);  color: var(--error-b);   border: 1px solid rgba(255,96,96,0.25); }
-    .dash-badge.pending { background: rgba(255,191,0,0.14); color: #ffbf00; border: 1px solid rgba(255,191,0,0.3); }
-
-    .dash-loading {
-      color: #606080; font-size: 0.75rem; font-style: italic;
-      animation: shimmer 1.4s ease-in-out infinite;
-    }
-    @keyframes shimmer { 0%,100% { opacity: 0.35; } 50% { opacity: 0.9; } }
-
-    .text-ok   { color: var(--success-b); font-weight: 600; }
-    .text-warn { color: var(--error-b);   font-weight: 600; }
-
-    /* ─── Hash field shorthand ─── */
-    .hash-row { display: flex; gap: 8px; margin-top: 9px; }
-    .hash-row input { flex: 1; }
-
-    /* ─── Phase 1: View containers ─── */
-    .view { padding: 22px 28px 0; }
-    .view .panels {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 18px;
-      padding: 0;
-      max-width: 720px;
-      margin: 0 auto;
     }
 
-    /* ─── Phase 1: Hero card (Connect / placeholders) ─── */
-    .hero {
-      text-align: center;
-      padding: 56px 28px;
-      max-width: 520px;
-      margin: 48px auto;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-    }
-    .hero h2 { font-size: 1.35rem; font-weight: 700; margin-bottom: 10px; }
-    .hero p  { color: var(--muted); font-size: 0.88rem; line-height: 1.55; margin-bottom: 24px; }
-    .hero button {
-      background: var(--accent); color: #fff;
-      padding: 12px 26px; font-size: 0.92rem;
-    }
-    .hero.error    { border-color: rgba(255,96,96,0.4); }
-    .hero.error h2 { color: var(--error-b); }
-
-    /* ─── Phase 3: Student credential cards ─── */
-    .cred-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--surface);
-      padding: 16px 18px;
-      margin-top: 14px;
-    }
-    .cred-card:first-child { margin-top: 0; }
-    .cred-card.revoked { border-color: rgba(255,96,96,0.35); }
-    .cred-school-group { margin-top: 26px; }
-    .cred-school-group:first-child { margin-top: 0; }
-    .cred-school-head {
+    .nav-brand {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       gap: 10px;
-      margin: 0 0 10px;
-      padding-bottom: 6px;
-      border-bottom: 1px solid var(--border);
+      min-width: min(100%, 480px);
+    }
+
+    .nav-logo {
+      width: 32px;
+      height: 32px;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #06222b;
       font-size: 1rem;
-    }
-    .cred-school-head .cred-school-addr {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
+      line-height: 1;
     }
 
-    .cred-title {
-      display: flex; align-items: flex-start; justify-content: space-between;
-      gap: 12px; margin-bottom: 8px;
-    }
-    .cred-title h4 {
-      font-size: 1rem; font-weight: 700; color: var(--text); line-height: 1.3;
-    }
-    .cred-subtitle { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
-    .cred-meta {
-      display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px;
-      font-size: 0.78rem; margin-top: 10px;
-    }
-    .cred-meta .k { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; font-size: 0.7rem; padding-top: 2px; }
-    .cred-meta .v { color: var(--text); word-break: break-all; }
-    .cred-hash { font-family: 'Courier New', monospace; font-size: 0.7rem; color: #c0c0e0; }
-
-    .cred-actions {
-      display: flex; flex-wrap: wrap; gap: 8px;
-      margin-top: 14px; padding-top: 12px;
-      border-top: 1px solid var(--border);
-    }
-    .cred-actions button {
-      flex: 1; min-width: 110px; padding: 8px 12px; font-size: 0.78rem;
-    }
-    .btn-mail { background: #4a5a8a; color: #fff; }
-
-    .cred-grant-form {
-      display: none; gap: 8px; align-items: center;
-      margin-top: 10px; padding: 10px; border-radius: 8px;
-      background: rgba(0,191,165,0.05); border: 1px solid rgba(0,191,165,0.2);
-    }
-    .cred-grant-form.show { display: flex; flex-wrap: wrap; }
-    .cred-grant-form input {
-      flex: 1; min-width: 200px; font-size: 0.78rem;
-    }
-    .cred-grant-form button {
-      padding: 8px 12px; font-size: 0.76rem; min-width: 90px;
+    .nav-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex: 1 1 auto;
+      justify-content: center;
+      flex-wrap: wrap;
     }
 
-    /* ─── Phase 5: Inline label edit row ─── */
-    .label-edit {
-      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-      margin-top: 8px; padding: 10px;
-      border-radius: 8px;
-      background: rgba(120,140,200,0.06);
-      border: 1px solid rgba(120,140,200,0.2);
-    }
-    .label-edit input {
-      flex: 1; min-width: 180px; font-size: 0.78rem;
-    }
-    .label-edit button {
-      padding: 6px 12px; font-size: 0.74rem; min-width: 70px;
-    }
-    .btn-label-edit {
-      background: transparent; border: none; cursor: pointer;
-      color: var(--muted); font-size: 0.85rem; padding: 0 4px;
-    }
-    .btn-label-edit:hover { color: var(--accent2); }
-
-    /* ─── Phase 6: Reissue modal ─── */
-    .modal-backdrop {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.6);
-      display: none; align-items: center; justify-content: center;
-      z-index: 999;
-    }
-    .modal-backdrop.show { display: flex; }
-    .modal-content {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 24px 28px;
-      width: min(560px, 92vw);
-      max-height: 88vh;
-      overflow-y: auto;
-    }
-    .modal-content h3 { margin-bottom: 4px; }
-    .modal-content .modal-sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 16px; }
-    .modal-actions {
-      display: flex; gap: 10px; margin-top: 18px;
-      padding-top: 14px; border-top: 1px solid var(--border);
-    }
-    .modal-actions button { flex: 1; }
-
-    /* ─── Phase 6: Pending reissue request cards (issuer view) ─── */
-    .reissue-req-card {
-      border: 1px solid rgba(255,191,0,0.3);
-      background: rgba(255,191,0,0.04);
-      border-radius: 10px;
-      padding: 14px 16px;
-      margin-top: 12px;
-    }
-    .reissue-req-card:first-child { margin-top: 0; }
-    .reissue-req-card .rr-head {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 8px;
-    }
-    .reissue-req-card .rr-fields {
-      display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px;
-      font-size: 0.78rem; margin: 8px 0;
-    }
-    .reissue-req-card .rr-fields .k { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.68rem; }
-    .reissue-req-card .rr-reason {
-      font-size: 0.82rem; padding: 8px 10px;
-      background: rgba(0,0,0,0.2); border-radius: 6px; margin: 8px 0;
-    }
-    .reissue-req-card .rr-actions {
-      display: flex; gap: 8px; margin-top: 10px;
-    }
-    .reissue-req-card .rr-actions button {
-      flex: 1; padding: 8px 12px; font-size: 0.78rem;
+    .nav-tab {
+      padding: 6px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--pill);
+      color: var(--meta);
+      font-size: 0.78rem;
+      font-weight: 600;
+      opacity: 0.55;
+      cursor: default;
+      user-select: none;
     }
 
-    .empty-state {
-      text-align: center; padding: 40px 20px;
-      color: var(--muted); font-size: 0.88rem;
-    }
-
-    /* ─── Phase 1: Header role badge + logout ─── */
-    #currentRoleBadge {
-      font-size: 0.74rem; font-weight: 700;
-      padding: 5px 10px; border-radius: 6px;
-      background: rgba(108,99,255,0.15);
+    .nav-tab.active {
+      border-color: rgba(34, 211, 238, 0.4);
+      background: rgba(34, 211, 238, 0.12);
       color: var(--accent);
-      letter-spacing: 0.4px; text-transform: uppercase;
-      font-family: 'Courier New', monospace;
-    }
-    #logoutBtn {
-      background: var(--surface); color: var(--error-b);
-      border: 1px solid var(--error-b);
-      padding: 8px 14px; font-size: 0.82rem;
-    }
-
-    /* ─── Public Lookup ─── */
-    .public-lookup-panel {
-      max-width: 720px;
-      margin: 0 auto 48px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 36px 32px;
-    }
-    .public-lookup-panel h2 {
-      font-size: 1.15rem; font-weight: 700; margin-bottom: 6px;
-    }
-    .public-lookup-panel > p {
-      color: var(--muted); font-size: 0.84rem; line-height: 1.5; margin-bottom: 18px;
-    }
-    .public-lookup-row {
-      display: flex; gap: 10px; margin-bottom: 10px;
-    }
-    .public-lookup-row input { flex: 1; }
-    .public-lookup-row button {
-      background: var(--verifier); color: #fff;
-      padding: 9px 22px; white-space: nowrap;
-    }
-    #publicLookupResult {
-      font-size: 0.82rem; min-height: 0; margin-bottom: 8px;
-    }
-
-    /* Credential cards */
-    .cred-cards { display: flex; flex-direction: column; gap: 10px; }
-    .cred-card {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 14px 18px;
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; cursor: pointer;
-      transition: border-color 0.15s, opacity 0.15s;
-    }
-    .cred-card:hover { border-color: var(--accent); }
-    .cred-card.revoked { opacity: 0.55; }
-    .cred-card-info {
-      flex: 1; min-width: 0;
-      font-size: 0.8rem; color: var(--text);
-      display: flex; flex-direction: column; gap: 3px;
-    }
-    .cred-card-hash {
-      font-family: 'Courier New', monospace; font-size: 0.72rem;
-      color: #c0c0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .cred-card-meta { font-size: 0.74rem; color: var(--muted); }
-    .cred-card-badge {
-      flex-shrink: 0; font-size: 0.67rem; font-weight: 700;
-      padding: 3px 10px; border-radius: 4px; text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-    .cred-card-badge.valid   { background: rgba(0,212,170,0.14); color: var(--success-b); border: 1px solid rgba(0,212,170,0.25); }
-    .cred-card-badge.revoked { background: rgba(255,96,96,0.14);  color: var(--error-b);   border: 1px solid rgba(255,96,96,0.25); }
-    .cred-card-badge.invalid { background: rgba(255,152,0,0.14);  color: var(--verifier);  border: 1px solid rgba(255,152,0,0.25); }
-
-    .public-truncate-msg {
-      font-size: 0.76rem; color: var(--muted); text-align: center; margin-top: 8px;
-    }
-
-    /* ─── Professional product UI pass ─── */
-    :root {
-      --bg:        #f5f6f8;
-      --surface:   #ffffff;
-      --card:      #ffffff;
-      --field:     #fbfcfd;
-      --border:    #d9dee6;
-      --border-2:  #c5ccd7;
-      --accent:    #146a5d;
-      --accent2:   #2f5f8f;
-      --text:      #1d242d;
-      --muted:     #66717f;
-      --soft:      #eef2f5;
-      --success:   #e8f3ef;
-      --success-b: #146a5d;
-      --error:     #f8e9e7;
-      --error-b:   #b42318;
-      --pending:   #f6efd9;
-      --pending-b: #9a6a00;
-      --issuer:    #146a5d;
-      --holder:    #2f5f8f;
-      --verifier:  #5f6470;
-      --shadow:    0 1px 2px rgba(25, 33, 42, 0.08), 0 12px 32px rgba(25, 33, 42, 0.06);
-      --mono:      ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --sans:      "IBM Plex Sans", Aptos, "Segoe UI", system-ui, -apple-system, sans-serif;
-    }
-
-    body {
-      font-family: var(--sans);
-      background:
-        linear-gradient(180deg, #fafbfc 0, var(--bg) 280px),
-        var(--bg);
-      color: var(--text);
-      padding-bottom: 56px;
-    }
-
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0 0 auto;
-      height: 3px;
-      background: linear-gradient(90deg, var(--accent), #8b6f2a, var(--accent2));
-      z-index: 1000;
-    }
-
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      background: rgba(255,255,255,0.94);
-      border-bottom: 1px solid var(--border);
-      padding: 15px clamp(18px, 4vw, 42px);
-      box-shadow: 0 1px 0 rgba(25, 33, 42, 0.02);
-      backdrop-filter: blur(10px);
+      opacity: 1;
     }
 
     .header-left {
-      min-width: min(100%, 520px);
+      min-width: 0;
     }
 
     .header-left h1 {
-      font-size: 0.98rem;
+      color: var(--heading);
+      font-size: 0.94rem;
       font-weight: 700;
       letter-spacing: 0;
-      color: #18202a;
+      line-height: 1.25;
     }
 
     .header-left p {
-      margin-top: 4px;
-      font-size: 0.74rem;
+      margin-top: 3px;
       color: var(--muted);
+      font-size: 0.72rem;
       line-height: 1.5;
     }
 
     .header-left p a,
     .dash-link,
     .cred-meta a,
+    .rr-fields a,
     .result a {
-      color: var(--accent2);
-      text-decoration: none;
-      border-bottom: 1px solid rgba(47, 95, 143, 0.28);
-    }
-
-    .header-left p a:hover,
-    .dash-link:hover,
-    .cred-meta a:hover,
-    .result a:hover {
-      color: #214d77;
-      border-bottom-color: currentColor;
-      text-decoration: none;
+      font-family: var(--mono);
+      font-size: 0.72rem;
     }
 
     .connect-area {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
       gap: 8px;
       flex-wrap: wrap;
-      justify-content: flex-end;
+    }
+
+    #walletStatus,
+    #currentRoleBadge {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: var(--pill);
+      background: var(--neutral);
+      color: var(--neutral-fg);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      text-transform: uppercase;
+      padding: 0 10px;
     }
 
     #walletStatus {
-      min-height: 32px;
-      display: inline-flex;
-      align-items: center;
-      padding: 0 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--field);
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 0.73rem;
+      text-transform: none;
+      letter-spacing: 0;
     }
 
     #walletStatus.connected {
       background: var(--success);
-      border-color: rgba(20, 106, 93, 0.32);
+      border-color: rgba(52, 211, 153, 0.32);
       color: var(--success-b);
     }
 
     button {
-      min-height: 34px;
+      min-height: 32px;
+      cursor: pointer;
       border: 1px solid transparent;
-      border-radius: 6px;
+      border-radius: var(--radius);
+      background: var(--surface-2, #1a212e);
+      color: #cbd5e1;
       padding: 8px 14px;
-      font-family: var(--sans);
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 650;
       letter-spacing: 0;
-      transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+      transition: background-color 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
     }
 
     button:hover:not(:disabled) {
-      opacity: 1;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(25, 33, 42, 0.12);
+      filter: brightness(0.96);
     }
 
     button:active:not(:disabled) {
-      transform: translateY(0);
-      box-shadow: none;
+      filter: brightness(0.93);
     }
 
     button:focus-visible,
     input:focus-visible,
     textarea:focus-visible,
     select:focus-visible {
-      outline: 3px solid rgba(47, 95, 143, 0.22);
+      outline: 2px solid rgba(96, 165, 250, 0.24);
       outline-offset: 1px;
     }
 
     button:disabled {
+      cursor: not-allowed;
       opacity: 0.48;
-      box-shadow: none;
+      filter: none;
     }
 
     #connectBtn,
-    .hero button,
     .btn-issuer,
-    .btn-holder,
-    .btn-verify,
     .public-lookup-row button {
       background: var(--accent);
-      color: #ffffff;
       border-color: var(--accent);
+      color: #06222b;
+      font-weight: 700;
     }
 
     .btn-holder {
       background: var(--accent2);
       border-color: var(--accent2);
+      color: #ffffff;
     }
 
     .btn-verify {
-      background: #242b35;
-      border-color: #242b35;
-      font-size: 0.86rem;
-      padding: 10px 14px;
-    }
-
-    .btn-dl {
-      background: #ffffff;
-      color: var(--accent2);
-      border-color: var(--border-2);
+      background: var(--near-black);
+      border-color: var(--near-black);
+      color: #ffffff;
+      font-size: 0.78rem;
     }
 
     .btn-mail,
-    #switchBtn,
-    #logoutBtn {
-      background: #ffffff;
-      color: #2d3540;
+    .btn-dl,
+    #switchBtn {
+      background: var(--surface-2);
       border-color: var(--border-2);
-    }
-
-    #logoutBtn {
-      color: var(--error-b);
-      border-color: rgba(180, 35, 24, 0.32);
+      color: #cbd5e1;
     }
 
     #switchBtn {
       color: var(--accent2);
-      border-color: rgba(47, 95, 143, 0.34);
+    }
+
+    .btn-danger,
+    #logoutBtn {
+      background: transparent;
+      border-color: rgba(248, 113, 113, 0.4);
+      color: var(--error-b);
     }
 
     .btn-issuer,
     .btn-holder,
     .btn-verify,
-    .btn-dl {
+    .btn-dl,
+    .btn-danger {
       width: 100%;
       margin-top: 10px;
     }
 
     .view {
-      width: min(100%, 1120px);
+      width: min(100%, 1040px);
       margin: 0 auto;
-      padding: 28px clamp(16px, 4vw, 42px) 0;
+      padding: 18px clamp(14px, 3vw, 32px) 0;
     }
 
     #viewConnect {
       display: grid;
-      grid-template-columns: minmax(280px, 0.82fr) minmax(320px, 1fr);
-      align-items: stretch;
-      gap: 18px;
+      grid-template-columns: 320px minmax(0, 1fr);
+      align-items: start;
+      gap: 12px;
     }
 
     #viewPublicResult {
@@ -753,303 +315,405 @@
 
     #publicResultTitle {
       margin: 16px 0 18px;
-      font-size: 1.25rem;
-      line-height: 1.3;
-      letter-spacing: 0;
-    }
-
-    .view .panels {
-      max-width: 860px;
-      gap: 18px;
+      color: var(--heading);
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.25;
     }
 
     .panels {
-      padding: 0;
-      gap: 18px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+      gap: 12px;
     }
 
-    .panel,
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .stat-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      box-shadow: var(--shadow);
+      padding: 14px 16px;
+    }
+
+    .stat-card .stat-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    .stat-card .stat-num {
+      margin-top: 6px;
+      color: var(--accent);
+      font-size: 1.7rem;
+      font-weight: 750;
+      line-height: 1.1;
+    }
+
+    .stat-card .stat-sub {
+      margin-top: 2px;
+      color: var(--meta);
+      font-size: 0.72rem;
+    }
+
     .hero,
-    .public-lookup-panel {
+    .panel {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius);
       box-shadow: var(--shadow);
     }
 
-    .panel {
-      overflow: clip;
-    }
-
     .hero {
-      max-width: none;
-      margin: 0;
-      padding: 32px;
-      text-align: left;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      min-height: 300px;
+      padding: 18px;
     }
 
     .hero h2,
-    .public-lookup-panel h2 {
-      font-size: 1.35rem;
-      font-weight: 720;
-      line-height: 1.2;
-      margin: 0 0 10px;
+    .panel-header h2 {
+      color: var(--heading);
+      font-size: 1rem;
+      font-weight: 700;
       letter-spacing: 0;
-      color: #18202a;
+      line-height: 1.25;
     }
 
     .hero p,
-    .public-lookup-panel > p,
-    .modal-content .modal-sub {
+    .modal-sub,
+    .section-note,
+    .form-note {
       color: var(--muted);
-      font-size: 0.88rem;
-      line-height: 1.55;
+      font-size: 0.8rem;
+      line-height: 1.45;
     }
 
     .hero p {
-      margin-bottom: 26px;
-    }
-
-    .hero button {
-      width: fit-content;
-      padding: 10px 18px;
-      font-size: 0.84rem;
+      margin: 0 0 14px;
     }
 
     .hero.error {
-      border-color: rgba(180, 35, 24, 0.34);
-      background: #fffafa;
+      border-color: rgba(248, 113, 113, 0.34);
+      background: rgba(239, 68, 68, 0.06);
     }
 
     .hero.error h2 {
       color: var(--error-b);
     }
 
-    .public-lookup-panel {
-      max-width: none;
-      margin: 0;
-      padding: 32px;
+    .form-note {
+      margin-top: 6px;
+      font-size: 0.75rem;
+    }
+
+    .section-note {
+      margin-bottom: 12px;
+    }
+
+    .mt-md {
+      margin-top: 12px;
     }
 
     .public-lookup-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 8px;
       align-items: stretch;
+      margin-bottom: 10px;
     }
 
     .public-lookup-row button {
-      padding-inline: 18px;
+      min-width: 92px;
+      white-space: nowrap;
+    }
+
+    .panel {
+      overflow: clip;
+    }
+
+    .connect-panel .panel-body,
+    .public-lookup-panel .panel-body {
+      padding-top: 14px;
     }
 
     .panel-header {
-      padding: 16px 18px;
-      background: #fbfcfd;
-      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
       gap: 12px;
-    }
-
-    .panel-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      background: #edf2f1;
-      border: 1px solid #d5e4e0;
-      color: var(--accent);
-      font-size: 0.72rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      font-family: var(--sans);
-    }
-
-    .panel-icon.issuer,
-    .panel-icon.holder,
-    .panel-icon.verifier {
-      background: #edf2f1;
-    }
-
-    .panel-icon.holder {
-      color: var(--accent2);
-      background: #eef3f7;
-      border-color: #d6e1ea;
-    }
-
-    .panel-icon.verifier {
-      color: #424a55;
-      background: #f1f2f4;
-      border-color: #d8dce2;
-    }
-
-    .panel-header h2 {
-      font-size: 1rem;
-      font-weight: 720;
-      letter-spacing: 0;
-      color: #1b232c;
+      padding: 12px 14px;
+      background: var(--panel-head);
+      border-bottom: 1px solid var(--border);
     }
 
     .panel-header p {
       margin-top: 2px;
-      font-size: 0.75rem;
       color: var(--muted);
+      font-size: 0.75rem;
+      line-height: 1.35;
+    }
+
+    .panel-icon {
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      border-radius: 8px;
+      background: rgba(34, 211, 238, 0.12);
+      color: var(--issuer);
+      font-family: var(--sans);
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    .panel-icon.holder {
+      background: rgba(167, 139, 250, 0.14);
+      border-color: rgba(167, 139, 250, 0.32);
+      color: var(--holder);
+    }
+
+    .panel-icon.verifier {
+      background: rgba(52, 211, 153, 0.14);
+      border-color: rgba(52, 211, 153, 0.32);
+      color: var(--verifier);
     }
 
     .panel-body {
-      padding: 0 18px 20px;
+      padding: 0 14px 16px;
     }
 
     .section {
-      margin-top: 18px;
-      padding-top: 18px;
+      margin-top: 14px;
+      padding-top: 14px;
       border-top: 1px solid var(--border);
     }
 
+    .section:first-child,
+    .section-compact {
+      border-top: 0;
+    }
+
+    .section-compact {
+      margin-top: 6px;
+      padding-top: 0;
+    }
+
     .section h3 {
-      margin-bottom: 12px;
-      color: #3d4652;
-      font-size: 0.72rem;
+      margin-bottom: 10px;
+      color: var(--section-label);
+      font-size: 0.69rem;
       font-weight: 760;
-      text-transform: uppercase;
       letter-spacing: 0.08em;
+      line-height: 1.25;
+      text-transform: uppercase;
     }
 
     label {
-      margin: 11px 0 5px;
-      color: #46515e;
-      font-size: 0.76rem;
+      display: block;
+      margin: 9px 0 5px;
+      color: var(--label);
+      font-size: 0.74rem;
       font-weight: 650;
+    }
+
+    label:first-of-type {
+      margin-top: 0;
     }
 
     input,
     textarea,
     select {
-      min-height: 36px;
-      background: var(--field);
+      width: 100%;
+      min-height: 34px;
       border: 1px solid var(--border-2);
-      border-radius: 6px;
+      border-radius: var(--radius);
+      background: var(--field);
       color: var(--text);
       padding: 8px 10px;
       font-family: var(--sans);
-      font-size: 0.84rem;
-      box-shadow: inset 0 1px 1px rgba(25, 33, 42, 0.03);
+      font-size: 0.8rem;
+      outline: 0;
+      transition: background-color 0.12s ease, border-color 0.12s ease;
+    }
+
+    textarea {
+      min-height: 56px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    select {
+      cursor: pointer;
     }
 
     input:focus,
     textarea:focus,
     select:focus {
-      border-color: var(--accent2);
-      background: #ffffff;
+      border-color: var(--accent);
+      background: var(--field);
     }
 
     input::placeholder,
     textarea::placeholder {
-      color: #8a93a0;
+      color: #5b6575;
     }
 
     select option {
-      background: #ffffff;
+      background: var(--surface);
       color: var(--text);
     }
 
     input[type="date"],
     input[type="month"] {
-      color-scheme: light;
+      color-scheme: dark;
+      cursor: pointer;
     }
 
     input[type="date"]::-webkit-calendar-picker-indicator,
     input[type="month"]::-webkit-calendar-picker-indicator {
-      filter: none;
+      cursor: pointer;
       opacity: 0.72;
     }
 
+    input[type="file"] {
+      cursor: pointer;
+      padding: 7px 10px;
+    }
+
     input[type="file"]::file-selector-button {
-      background: #eef2f5;
-      color: #27313c;
+      margin-right: 10px;
       border: 1px solid var(--border-2);
-      border-radius: 5px;
-      padding: 5px 10px;
+      border-radius: var(--radius);
+      background: var(--neutral);
+      color: #cbd5e1;
+      cursor: pointer;
+      font-size: 0.78rem;
       font-weight: 650;
+      padding: 5px 10px;
     }
 
     input[type="file"]::file-selector-button:hover {
-      background: #e4e9ee;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    input[type="radio"],
+    input[type="checkbox"] {
+      width: auto;
+      min-height: 0;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      accent-color: var(--accent2);
+    }
+
+    #publicLookupAddr,
+    #regIssuerAddr,
+    #newAdminAddr,
+    #issueStudentAddr,
+    #verifyStudentAddr,
+    input[id^="grantVerifier_"] {
+      font-family: var(--mono);
+      font-size: 0.72rem;
     }
 
     .signup-form {
       max-width: 420px;
       margin: 0 0 18px;
+      text-align: left;
     }
 
     .role-toggle {
+      display: flex;
       justify-content: flex-start;
       gap: 8px;
-      margin: 0 0 18px;
       flex-wrap: wrap;
+      margin: 0 0 18px;
+      font-size: 0.8rem;
     }
 
     .role-toggle label {
-      margin: 0;
       min-height: 34px;
-      padding: 7px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius);
       background: var(--field);
-      color: #33404d;
-      font-size: 0.8rem;
+      color: var(--text);
+      cursor: pointer;
+      padding: 7px 10px;
     }
 
-    .hash-preview,
-    .label-edit,
-    .cred-grant-form {
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: #f7faf9;
+    .role-toggle input {
+      width: auto;
+      min-height: 0;
     }
 
     .hash-preview {
-      color: var(--accent);
+      display: none;
+      margin-top: 6px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--soft);
+      color: var(--mono-accent);
       font-family: var(--mono);
       font-size: 0.68rem;
+      padding: 6px 9px;
+      word-break: break-all;
     }
 
     .hash-preview-label {
+      margin-bottom: 2px;
       color: var(--muted);
       font-family: var(--sans);
-      letter-spacing: 0;
+      font-size: 0.62rem;
     }
 
     .result {
+      display: none;
       margin-top: 10px;
-      padding: 10px 12px;
-      border-radius: 6px;
-      font-size: 0.8rem;
+      border-radius: var(--radius);
+      font-size: 0.78rem;
       line-height: 1.55;
+      padding: 10px 12px;
       word-break: break-word;
+    }
+
+    .result.show {
+      display: block;
     }
 
     .result.success {
       background: var(--success);
-      border: 1px solid rgba(20, 106, 93, 0.32);
-      color: #0f5148;
+      border: 1px solid rgba(52, 211, 153, 0.32);
+      color: #6ee7b7;
     }
 
     .result.error {
       background: var(--error);
-      border: 1px solid rgba(180, 35, 24, 0.32);
-      color: #8f1e16;
+      border: 1px solid rgba(248, 113, 113, 0.32);
+      color: #fca5a5;
     }
 
     .result.pending {
       background: var(--pending);
-      border: 1px solid rgba(154, 106, 0, 0.28);
-      color: #6d4c00;
+      border: 1px solid rgba(251, 191, 36, 0.28);
+      color: #fcd34d;
     }
 
     .result a {
-      font-family: var(--mono);
-      font-size: 0.72rem;
+      display: block;
+      margin-top: 3px;
     }
 
     .mono,
@@ -1058,137 +722,19 @@
     .cred-card-hash,
     .cred-school-head .cred-school-addr {
       font-family: var(--mono);
-      color: #45515f;
+      color: var(--mono-accent);
     }
 
-    .verify-dashboard {
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
+    .mono {
+      display: block;
+      margin-top: 2px;
+      font-size: 0.7rem;
+      word-break: break-all;
     }
 
-    .verify-dashboard.verified,
-    .verify-dashboard.invalid,
-    .verify-dashboard.errored {
-      box-shadow: none;
-    }
-
-    .verify-dashboard.verified { border-color: rgba(20, 106, 93, 0.36); }
-    .verify-dashboard.invalid  { border-color: rgba(180, 35, 24, 0.34); }
-    .verify-dashboard.errored  { border-color: rgba(154, 106, 0, 0.34); }
-
-    .dash-status {
-      padding: 16px 18px;
-      gap: 12px;
-      background: #fbfcfd;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .dash-status.verified { background: var(--success); }
-    .dash-status.invalid  { background: var(--error); }
-    .dash-status.errored  { background: var(--pending); }
-
-    .dash-icon {
-      width: 34px;
-      height: 34px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 999px;
-      background: #ffffff;
-      border: 1px solid currentColor;
-      font-size: 0;
-    }
-
-    .dash-icon::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .dash-label {
-      font-size: 0.92rem;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-    }
-
-    .dash-reason {
-      font-size: 0.78rem;
-      color: #586372;
-    }
-
-    .dash-row {
-      padding: 9px 18px;
-      border-bottom: 1px solid #eef1f4;
-    }
-
-    .dash-row:hover {
-      background: #fafbfc;
-    }
-
-    .dash-key,
-    .cred-meta .k,
-    .reissue-req-card .rr-fields .k {
-      color: #687381;
-      font-size: 0.68rem;
-      font-weight: 750;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-
-    .dash-val {
-      color: var(--text);
-      font-size: 0.82rem;
-    }
-
-    .dash-badge,
-    .cred-card-badge {
-      min-height: 22px;
-      border-radius: 999px;
-      padding: 3px 9px;
-      font-size: 0.66rem;
-      font-weight: 760;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      background: #eef2f5;
-      color: #4d5966;
-      border: 1px solid #d5dce4;
-    }
-
-    .dash-badge.ok,
-    .cred-card-badge.valid {
-      background: var(--success);
-      color: var(--success-b);
-      border-color: rgba(20, 106, 93, 0.28);
-    }
-
-    .dash-badge.warn,
-    .cred-card-badge.revoked {
-      background: var(--error);
-      color: var(--error-b);
-      border-color: rgba(180, 35, 24, 0.28);
-    }
-
-    .dash-badge.pending,
-    .cred-card-badge.invalid {
-      background: var(--pending);
-      color: var(--pending-b);
-      border-color: rgba(154, 106, 0, 0.26);
-    }
-
-    .dash-badge.success {
-      background: #eef2f5;
-      color: #2d3540;
-      border-color: #cfd7df;
-    }
-
-    .dash-loading {
-      color: #7a8491;
-      font-size: 0.76rem;
-      font-style: normal;
-      animation: shimmer 1.2s ease-in-out infinite;
+    .mono-val {
+      font-size: 0.72rem;
+      word-break: break-all;
     }
 
     .text-ok {
@@ -1196,152 +742,498 @@
       font-weight: 680;
     }
 
-    .text-warn {
+    .text-warn,
+    .text-danger {
       color: var(--error-b);
       font-weight: 680;
+    }
+
+    .text-muted,
+    .rr-sub {
+      color: var(--muted);
+    }
+
+    .rr-sub {
+      font-size: 0.72rem;
+    }
+
+    .verify-dashboard {
+      display: none;
+      margin-top: 14px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .verify-dashboard.show {
+      display: block;
+    }
+
+    .verify-dashboard.verified {
+      border-color: rgba(52, 211, 153, 0.36);
+    }
+
+    .verify-dashboard.invalid {
+      border-color: rgba(248, 113, 113, 0.34);
+    }
+
+    .verify-dashboard.errored {
+      border-color: rgba(251, 191, 36, 0.34);
+    }
+
+    .dash-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      background: var(--panel-head);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dash-status.verified {
+      background: var(--success);
+    }
+
+    .dash-status.invalid {
+      background: var(--error);
+    }
+
+    .dash-status.errored {
+      background: var(--pending);
+    }
+
+    .dash-icon {
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      border: 1px solid currentColor;
+      border-radius: var(--pill);
+      background: transparent;
+      font-size: 0;
+    }
+
+    .dash-icon::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: var(--pill);
+      background: currentColor;
+    }
+
+    .dash-status.verified .dash-icon,
+    .dash-status.verified .dash-label {
+      color: var(--success-b);
+    }
+
+    .dash-status.invalid .dash-icon,
+    .dash-status.invalid .dash-label {
+      color: var(--error-b);
+    }
+
+    .dash-status.errored .dash-icon,
+    .dash-status.errored .dash-label {
+      color: var(--pending-b);
+    }
+
+    .dash-label {
+      font-size: 0.92rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      line-height: 1.25;
+      text-transform: uppercase;
+    }
+
+    .dash-reason {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .dash-grid {
+      padding: 4px 0 8px;
+    }
+
+    .dash-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 9px 18px;
+      border-bottom: 1px solid var(--divider);
+    }
+
+    .dash-row:last-child {
+      border-bottom: 0;
+    }
+
+    .dash-row:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dash-key,
+    .cred-meta .k,
+    .reissue-req-card .rr-fields .k {
+      flex-shrink: 0;
+      color: var(--meta);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .dash-key {
+      width: 84px;
+      padding-top: 2px;
+    }
+
+    .dash-val {
+      flex: 1;
+      color: var(--text);
+      font-size: 0.78rem;
+      word-break: break-word;
+    }
+
+    .dash-issuer-wrap {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .dash-badge,
+    .cred-card-badge {
+      min-height: 20px;
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border: 1px solid var(--border-2);
+      border-radius: 6px;
+      background: var(--neutral);
+      color: var(--neutral-fg);
+      font-size: 0.66rem;
+      font-weight: 760;
+      letter-spacing: 0.04em;
+      line-height: 1.2;
+      padding: 2px 7px;
+      text-transform: uppercase;
+    }
+
+    .dash-badge.ok,
+    .cred-card-badge.valid {
+      background: var(--success);
+      border-color: rgba(52, 211, 153, 0.28);
+      color: var(--success-b);
+    }
+
+    .dash-badge.warn,
+    .cred-card-badge.revoked {
+      background: var(--error);
+      border-color: rgba(248, 113, 113, 0.28);
+      color: var(--error-b);
+    }
+
+    .dash-badge.pending,
+    .cred-card-badge.invalid {
+      background: var(--pending);
+      border-color: rgba(251, 191, 36, 0.26);
+      color: var(--pending-b);
+    }
+
+    .dash-badge.success {
+      background: var(--neutral);
+      border-color: var(--border-2);
+      color: var(--text);
+    }
+
+    .badge-spaced {
+      margin-left: 8px;
+    }
+
+    .dash-loading {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-style: normal;
+    }
+
+    .loading-block {
+      padding: 24px 0;
     }
 
     .cred-school-group {
       margin-top: 24px;
     }
 
+    .cred-school-group:first-child {
+      margin-top: 0;
+    }
+
     .cred-school-head {
+      display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 10px;
+      margin: 0 0 10px;
       padding: 0 0 8px;
       border-bottom: 1px solid var(--border);
-      color: #222a33;
+      color: var(--heading);
       font-size: 0.92rem;
       font-weight: 720;
+      line-height: 1.3;
+    }
+
+    .cred-school-head .cred-school-addr {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 400;
     }
 
     .cred-card {
       display: block;
-      background: #ffffff;
+      margin-top: 14px;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 16px;
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      box-shadow: var(--shadow);
       cursor: default;
-      transition: border-color 0.12s ease, box-shadow 0.12s ease;
+      padding: 14px 16px;
+      transition: border-color 0.12s ease, opacity 0.12s ease;
+    }
+
+    .cred-card:first-child {
+      margin-top: 0;
     }
 
     .cred-card:hover {
       border-color: var(--border-2);
-      box-shadow: 0 8px 20px rgba(25, 33, 42, 0.07);
     }
 
     .cred-card.revoked {
+      border-color: rgba(248, 113, 113, 0.24);
       opacity: 0.72;
-      border-color: rgba(180, 35, 24, 0.24);
+    }
+
+    .cred-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
     }
 
     .cred-title h4 {
+      color: var(--heading);
       font-size: 0.98rem;
       font-weight: 720;
       letter-spacing: 0;
-      color: #1b232c;
+      line-height: 1.3;
     }
 
     .cred-subtitle {
+      margin-top: 2px;
       color: var(--muted);
       font-size: 0.78rem;
       line-height: 1.45;
     }
 
-    .cred-meta {
+    .cred-meta,
+    .reissue-req-card .rr-fields {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
       gap: 6px 12px;
+      margin-top: 10px;
       font-size: 0.78rem;
+      line-height: 1.45;
+    }
+
+    .cred-meta .k,
+    .reissue-req-card .rr-fields .k {
+      padding-top: 2px;
+    }
+
+    .cred-meta .v,
+    .reissue-req-card .rr-fields span:not(.k) {
+      min-width: 0;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .cred-hash {
+      font-size: 0.7rem;
+      word-break: break-all;
     }
 
     .cred-actions {
-      border-top: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
     }
 
     .cred-actions button,
     .cred-grant-form button,
     .label-edit button,
-    .reissue-req-card .rr-actions button {
+    .reissue-req-card .rr-actions button,
+    .modal-actions button {
       width: auto;
       margin-top: 0;
     }
 
+    .cred-actions button {
+      flex: 1;
+      min-width: 110px;
+    }
+
+    .cred-grant-form,
+    .label-edit {
+      display: none;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--soft);
+      padding: 10px;
+    }
+
+    .cred-grant-form.show {
+      display: flex;
+      flex-wrap: wrap;
+    }
+
+    .cred-grant-form input,
+    .label-edit input {
+      flex: 1;
+      min-width: 180px;
+      font-size: 0.78rem;
+    }
+
     .btn-label-edit {
       min-height: 0;
+      width: auto;
+      margin: 0;
       border: 0;
       background: transparent;
-      box-shadow: none;
       color: var(--accent2);
+      font-size: 0.76rem;
       padding: 0 4px;
-      font-size: 0.82rem;
     }
 
     .btn-label-edit:hover {
-      color: var(--accent2);
-      box-shadow: none;
+      filter: none;
+      color: #93c5fd;
     }
 
     .modal-backdrop {
-      background: rgba(21, 27, 34, 0.48);
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.62);
       padding: 18px;
     }
 
+    .modal-backdrop.show {
+      display: flex;
+    }
+
     .modal-content {
-      background: #ffffff;
-      border-radius: 8px;
-      box-shadow: 0 24px 80px rgba(25, 33, 42, 0.28);
+      width: min(560px, 92vw);
+      max-height: 88vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+      padding: 24px 28px;
     }
 
     .modal-content h3 {
+      margin-bottom: 4px;
+      color: var(--heading);
       font-size: 1.12rem;
-      color: #1b232c;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .modal-sub {
+      margin-bottom: 16px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .modal-actions button {
+      flex: 1;
     }
 
     .reissue-req-card {
-      background: #ffffff;
+      margin-top: 12px;
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      box-shadow: var(--shadow);
       padding: 14px 16px;
     }
 
+    .reissue-req-card:first-child {
+      margin-top: 0;
+    }
+
     .reissue-req-card .rr-head {
+      display: flex;
       align-items: flex-start;
+      justify-content: space-between;
       gap: 12px;
+      margin-bottom: 8px;
     }
 
     .reissue-req-card .rr-reason {
-      background: #f7f8fa;
-      border: 1px solid #e8ecf1;
-      border-radius: 6px;
-      color: #313a45;
+      margin: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--soft);
+      color: var(--text);
       font-size: 0.81rem;
+      padding: 8px 10px;
     }
 
-    .reissue-req-card .rr-fields {
-      gap: 6px 12px;
-      line-height: 1.45;
+    .reissue-req-card .rr-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .reissue-req-card .rr-actions button {
+      flex: 1;
     }
 
     .empty-state {
-      background: #fbfcfd;
       border: 1px dashed var(--border-2);
-      border-radius: 8px;
-      color: #6d7784;
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--muted);
+      font-size: 0.82rem;
       padding: 28px 18px;
       text-align: center;
     }
 
-    #currentRoleBadge {
-      min-height: 32px;
-      align-items: center;
-      border-radius: 999px;
-      background: #eef2f5;
-      border: 1px solid var(--border);
-      color: #35404c;
-      font-family: var(--mono);
-      font-size: 0.68rem;
-      letter-spacing: 0.04em;
+    .public-truncate-msg {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-align: center;
     }
 
     @media (max-width: 820px) {
@@ -1350,26 +1242,21 @@
       }
 
       .connect-area {
-        justify-content: flex-start;
         width: 100%;
+        justify-content: flex-start;
       }
 
-      #viewConnect {
+      #viewConnect,
+      .public-lookup-row {
         grid-template-columns: 1fr;
       }
 
-      .hero,
-      .public-lookup-panel {
-        padding: 24px;
-        min-height: auto;
-      }
-
-      .public-lookup-row {
-        flex-direction: column;
+      .hero {
+        padding: 16px;
       }
 
       .public-lookup-row button,
-      .hero button {
+      #connectBtn {
         width: 100%;
       }
 
@@ -1391,225 +1278,10 @@
       .reissue-req-card .rr-fields {
         grid-template-columns: 1fr;
       }
-    }
 
-    /* ─── Institutional console hardening ─── */
-    :root {
-      --bg: #f4f5f7;
-      --surface: #ffffff;
-      --card: #ffffff;
-      --field: #ffffff;
-      --border: #d6dbe3;
-      --border-2: #bfc7d2;
-      --accent: #195d55;
-      --accent2: #315f86;
-      --text: #202832;
-      --muted: #66717f;
-      --shadow: none;
-      --radius: 4px;
-    }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-    }
-
-    body::before {
-      display: none;
-    }
-
-    header {
-      position: static;
-      background: #ffffff;
-      border-bottom: 1px solid #d6dbe3;
-      box-shadow: none;
-      backdrop-filter: none;
-      padding: 12px clamp(16px, 3vw, 32px);
-    }
-
-    .header-left h1 {
-      font-size: 0.94rem;
-      font-weight: 700;
-    }
-
-    .header-left p {
-      margin-top: 3px;
-      font-size: 0.72rem;
-    }
-
-    #walletStatus,
-    #currentRoleBadge {
-      min-height: 30px;
-      border-radius: var(--radius);
-      background: #f7f8fa;
-    }
-
-    button {
-      min-height: 32px;
-      border-radius: var(--radius);
-      box-shadow: none;
-      font-size: 0.78rem;
-      transform: none;
-    }
-
-    button:hover:not(:disabled) {
-      transform: none;
-      box-shadow: none;
-      filter: brightness(0.96);
-    }
-
-    .btn-mail,
-    .btn-dl,
-    #switchBtn,
-    #logoutBtn {
-      background: #ffffff;
-    }
-
-    .view {
-      width: min(100%, 1040px);
-      padding: 18px clamp(14px, 3vw, 32px) 0;
-    }
-
-    #viewConnect {
-      grid-template-columns: 320px minmax(0, 1fr);
-      gap: 12px;
-      align-items: start;
-    }
-
-    .hero,
-    .public-lookup-panel,
-    .panel,
-    .verify-dashboard,
-    .cred-card,
-    .reissue-req-card,
-    .modal-content {
-      border-radius: var(--radius);
-      box-shadow: none;
-    }
-
-    .hero,
-    .public-lookup-panel {
-      min-height: 0;
-      padding: 18px;
-      border-color: var(--border);
-    }
-
-    .hero {
-      display: block;
-    }
-
-    .hero h2,
-    .public-lookup-panel h2,
-    .panel-header h2 {
-      font-size: 1rem;
-      font-weight: 700;
-      line-height: 1.25;
-    }
-
-    .hero p,
-    .public-lookup-panel > p {
-      margin: 0 0 14px;
-      font-size: 0.8rem;
-      line-height: 1.45;
-    }
-
-    .hero button {
-      width: 100%;
-    }
-
-    .public-lookup-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-    }
-
-    .public-lookup-row button {
-      min-width: 92px;
-    }
-
-    .panel-header {
-      padding: 12px 14px;
-      background: #f9fafb;
-    }
-
-    .panel-icon {
-      width: 26px;
-      height: 26px;
-      border-radius: var(--radius);
-      font-size: 0.62rem;
-      background: #ffffff;
-    }
-
-    .panel-body {
-      padding: 0 14px 16px;
-    }
-
-    .section {
-      margin-top: 14px;
-      padding-top: 14px;
-    }
-
-    .section h3 {
-      margin-bottom: 10px;
-      font-size: 0.69rem;
-      color: #4f5a67;
-    }
-
-    label {
-      margin-top: 9px;
-      font-size: 0.74rem;
-    }
-
-    input,
-    textarea,
-    select {
-      min-height: 34px;
-      border-radius: var(--radius);
-      box-shadow: none;
-      font-size: 0.8rem;
-    }
-
-    .result,
-    .hash-preview,
-    .label-edit,
-    .cred-grant-form,
-    .empty-state,
-    .reissue-req-card .rr-reason {
-      border-radius: var(--radius);
-    }
-
-    .result {
-      font-size: 0.78rem;
-    }
-
-    .dash-badge,
-    .cred-card-badge {
-      border-radius: var(--radius);
-      min-height: 20px;
-      padding: 2px 7px;
-      letter-spacing: 0.04em;
-    }
-
-    .cred-card:hover {
-      box-shadow: none;
-      border-color: var(--border-2);
-    }
-
-    .cred-actions {
-      padding-top: 10px;
-    }
-
-    .modal-backdrop {
-      background: rgba(32, 40, 50, 0.42);
-    }
-
-    @media (max-width: 820px) {
-      #viewConnect {
-        grid-template-columns: 1fr;
-      }
-
-      .public-lookup-row {
-        grid-template-columns: 1fr;
+      .modal-actions,
+      .reissue-req-card .rr-actions {
+        flex-direction: column;
       }
     }
   </style>
@@ -1619,20 +1291,30 @@
 <!-- Per-form datalists for the searchable Major field. Populated by main.ts —
      re-filled whenever that form's Department <select> changes. -->
 <datalist id="issueMajorsList"></datalist>
-<datalist id="revokeMajorsList"></datalist>
 <datalist id="verifyMajorsList"></datalist>
 
 <!-- ═══════════════════════════ HEADER -->
 <header>
-  <div class="header-left">
-    <h1>DACS Academic Credential Registry</h1>
-    <p>
-      Sepolia &nbsp;·&nbsp;
-      Registry: <a href="https://sepolia.etherscan.io/address/0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e" target="_blank">0xC4D2…33e</a>
-      &nbsp;·&nbsp;
-      Credential: <a href="https://sepolia.etherscan.io/address/0x7d1daB1874685d0e677c7927E424E1e37F89d644" target="_blank">0x7d1d…644</a>
-    </p>
+  <div class="nav-brand">
+    <span class="nav-logo" aria-hidden="true">◈</span>
+    <div class="header-left">
+      <h1>DACS</h1>
+      <p>
+        Sepolia &nbsp;·&nbsp;
+        Registry: <a href="https://sepolia.etherscan.io/address/0xC4D2Ea8f7d80Ae7Cceee41d741428D4687c5833e" target="_blank">0xC4D2…33e</a>
+        &nbsp;·&nbsp;
+        Credential: <a href="https://sepolia.etherscan.io/address/0x7d1daB1874685d0e677c7927E424E1e37F89d644" target="_blank">0x7d1d…644</a>
+      </p>
+    </div>
   </div>
+  <!-- Role indicator strip — reflects the connected wallet's role (wallet-locked,
+       not navigation). main.ts adds .active to the matching tab. -->
+  <nav class="nav-tabs" id="navTabs">
+    <span class="nav-tab" data-role="student">Student</span>
+    <span class="nav-tab" data-role="issuer">Institution</span>
+    <span class="nav-tab" data-role="admin">Admin</span>
+    <span class="nav-tab" data-role="verifier">Search</span>
+  </nav>
   <div class="connect-area">
     <span id="walletStatus">Not connected</span>
     <span id="currentRoleBadge" style="display:none"></span>
@@ -1643,21 +1325,35 @@
 
 <!-- ═══════════════════════════ VIEW: Connect MetaMask -->
 <section id="viewConnect" class="view">
-  <div class="hero">
-    <h2>Registry access</h2>
-    <p>Connect a registered wallet to continue.</p>
-    <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+  <div class="panel connect-panel">
+    <div class="panel-header">
+      <div class="panel-icon verifier">R</div>
+      <div>
+        <h2>Registry access</h2>
+        <p>Connect a registered wallet to continue.</p>
+      </div>
+    </div>
+    <div class="panel-body">
+      <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+    </div>
   </div>
 
   <!-- Public credential lookup — no wallet required -->
-  <div class="public-lookup-panel">
-    <h2>Credential search</h2>
-    <p>Search issued credentials by holder wallet.</p>
-    <div class="public-lookup-row">
-      <input id="publicLookupAddr" placeholder="Student wallet address (0x…)" />
-      <button onclick="publicLookup(this)">Search</button>
+  <div class="panel public-lookup-panel">
+    <div class="panel-header">
+      <div class="panel-icon verifier">C</div>
+      <div>
+        <h2>Credential search</h2>
+        <p>Search issued credentials by holder wallet.</p>
+      </div>
     </div>
-    <div id="publicLookupResult" class="result"></div>
+    <div class="panel-body">
+      <div class="public-lookup-row">
+        <input id="publicLookupAddr" placeholder="Student wallet address (0x…)" />
+        <button onclick="publicLookup(this)">Search</button>
+      </div>
+      <div id="publicLookupResult" class="result"></div>
+    </div>
   </div>
 </section>
 
@@ -1673,7 +1369,7 @@
   <div class="hero error">
     <h2>Multiple roles detected</h2>
     <p>This wallet matches more than one role (Issuer, Student, or Verifier). One wallet may only hold one role at a time. Disconnect and reconnect with a different wallet.</p>
-    <button onclick="logout()">Disconnect</button>
+    <button class="btn-danger" onclick="logout()">Disconnect</button>
   </div>
 </section>
 
@@ -1698,7 +1394,7 @@
       <input id="signupSchool" placeholder="Your school name" />
       <label>Contact email (optional)</label>
       <input id="signupContact" type="email" placeholder="you@example.edu" />
-      <p style="font-size:0.75rem; color: var(--muted); margin:6px 0 0;">
+      <p class="form-note">
         Your application is recorded on-chain. An admin reviews it and approves or
         rejects before you can access your dashboard.
       </p>
@@ -1714,13 +1410,13 @@
       <textarea id="applyNote" rows="2" placeholder="Anything that helps the registry owner verify you"></textarea>
       <label>Supporting document (PDF)</label>
       <input type="file" id="applyDoc" accept=".pdf" />
-      <p style="font-size:0.75rem; color: var(--muted); margin:6px 0 0;">
+      <p class="form-note">
         Your application is recorded on-chain; the document is pinned to IPFS. The
         registry owner reviews it and approves or rejects.
       </p>
     </div>
 
-    <button onclick="submitCreateAccount(this)">Submit</button>
+    <button class="btn-issuer" onclick="submitCreateAccount(this)">Submit</button>
     <div id="signupResult" class="result"></div>
   </div>
 
@@ -1729,15 +1425,15 @@
     <h2>Application pending review</h2>
     <p>Your application has been recorded on-chain. An admin will review it and
        approve or reject. Reconnect later to check the status.</p>
-    <button onclick="logout()">Disconnect</button>
+    <button class="btn-danger" onclick="logout()">Disconnect</button>
   </div>
 
   <!-- Application rejected -->
   <div id="signupRejectedWrap" class="hero error" style="display:none">
     <h2>Application rejected</h2>
     <p id="signupRejectedReason">Your application was not approved.</p>
-    <button onclick="reapply()">Re-apply</button>
-    <button onclick="logout()">Disconnect</button>
+    <button class="btn-issuer" onclick="reapply()">Re-apply</button>
+    <button class="btn-danger" onclick="logout()">Disconnect</button>
   </div>
 </section>
 
@@ -1757,7 +1453,7 @@
         <!-- Pending School Applications -->
         <div class="section">
           <h3>Pending School Applications</h3>
-          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+          <p class="section-note">
             Self-serve applications submitted on-chain. Approve to register the
             wallet as an issuer, or reject with a reason.
           </p>
@@ -1767,7 +1463,7 @@
         <!-- Pending Student Applications -->
         <div class="section">
           <h3>Pending Student Applications</h3>
-          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+          <p class="section-note">
             Self-serve applications submitted on-chain. Approve to register the
             wallet as a student, or reject with a reason.
           </p>
@@ -1777,7 +1473,7 @@
         <!-- Manual issuer registration -->
         <div class="section">
           <h3>Register Issuer manually</h3>
-          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+          <p class="section-note">
             Directly register an issuer wallet without an on-chain application.
           </p>
           <label>Issuer Address</label>
@@ -1789,7 +1485,7 @@
         <!-- Manage Admins (multi-admin) -->
         <div class="section">
           <h3>Manage Admins</h3>
-          <p id="manageAdminsHint" style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+          <p id="manageAdminsHint" class="section-note">
             Grant or revoke admin access. Admins can approve/reject schools and students.
           </p>
           <div id="manageAdminsAdd">
@@ -1798,7 +1494,7 @@
             <button class="btn-issuer" onclick="addAdminWallet(this)">Add Admin</button>
             <div id="addAdminResult" class="result"></div>
           </div>
-          <div id="manageAdminsList" class="empty-state" style="margin-top:12px;">No admins.</div>
+          <div id="manageAdminsList" class="empty-state mt-md">No admins.</div>
         </div>
 
       </div>
@@ -1854,40 +1550,20 @@
         <!-- Pending Reissuance Requests (Phase 6) -->
         <div class="section">
           <h3>Pending Reissuance Requests</h3>
-          <p style="font-size:0.8rem; color: var(--muted); margin-bottom: 12px;">
+          <p class="section-note">
             Requests addressed to this issuer wallet. Approve to revoke the old
             credential and issue a new one with the updated fields.
           </p>
           <div id="pendingReissuesList" class="empty-state">No pending requests.</div>
         </div>
 
-        <!-- Revoke Credential -->
+        <!-- Issued Credentials -->
         <div class="section">
-          <h3>Revoke Credential</h3>
-          <label>Student Address</label>
-          <input id="revokeStudentAddr" placeholder="0x…"
-            oninput="updateCredHash('revoke')" />
-          <label>Student ID</label>
-          <input id="revokeStudentId" placeholder="e.g., 20240417"
-            oninput="updateCredHash('revoke')" />
-          <label>Degree Level</label>
-          <select id="revokeLevel" onchange="updateCredHash('revoke')"></select>
-          <label>Department</label>
-          <select id="revokeDept" onchange="refreshMajors('revoke'); updateCredHash('revoke')"></select>
-          <label>Major</label>
-          <input id="revokeMajor" list="revokeMajorsList"
-            placeholder="Select department first…"
-            disabled
-            oninput="updateCredHash('revoke')" />
-          <label>Graduation Month</label>
-          <input id="revokeGradDate" type="month"
-            oninput="updateCredHash('revoke')" />
-          <div id="revokeHashPreview" class="hash-preview">
-            <div class="hash-preview-label">solidityPackedKeccak256 →</div>
-            <span id="revokeHashValue"></span>
-          </div>
-          <button class="btn-issuer" onclick="doRevokeCredential(this)">Revoke Credential</button>
-          <div id="revokeResult" class="result"></div>
+          <h3>Issued Credentials</h3>
+          <p class="section-note">
+            Credentials issued from this wallet. Revoke any active one with the button on its card.
+          </p>
+          <div id="issuerCreds" class="empty-state">Loading…</div>
         </div>
 
       </div>
@@ -1908,8 +1584,9 @@
         </div>
       </div>
       <div class="panel-body">
+        <div id="studentStats" class="stat-row" style="display:none"></div>
         <div id="studentCreds">
-          <div class="dash-loading" style="padding: 24px 0;">Loading credentials…</div>
+          <div class="dash-loading loading-block">Loading credentials…</div>
         </div>
       </div>
     </div>
@@ -1930,7 +1607,7 @@
       </div>
       <div class="panel-body">
 
-        <div class="section" style="border-top:none; margin-top:6px;">
+        <div class="section section-compact">
           <h3>Verify Credential</h3>
           <label>Student Address</label>
           <input id="verifyStudentAddr" placeholder="0x…"

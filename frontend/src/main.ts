@@ -46,7 +46,7 @@ declare global {
     updateCredHash:     (prefix: string) => void;
     doRegisterIssuer:   (btn: HTMLButtonElement) => Promise<void>;
     doIssueCredential:  (btn: HTMLButtonElement) => Promise<void>;
-    doRevokeCredential: (btn: HTMLButtonElement) => Promise<void>;
+    revokeCredentialByHash: (credHash: string, btn: HTMLButtonElement) => Promise<void>;
     switchAccount:      () => Promise<void>;
     doGrantAccess:      (btn: HTMLButtonElement) => Promise<void>;
     doRevokeAccess:     (btn: HTMLButtonElement) => Promise<void>;
@@ -103,6 +103,18 @@ function showView(viewId: ViewId): void {
     const el = document.getElementById(id);
     if (el) el.style.display = id === viewId ? "" : "none";
   }
+  // Highlight the role-indicator tab matching the active dashboard (wallet-locked,
+  // not navigation — see header markup).
+  const viewToRole: Partial<Record<ViewId, string>> = {
+    viewStudent: "student",
+    viewIssuer: "issuer",
+    viewAdmin: "admin",
+    viewVerifier: "verifier",
+  };
+  const activeRole = viewToRole[viewId];
+  document.querySelectorAll<HTMLElement>(".nav-tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.role === activeRole);
+  });
 }
 
 // Public lookup result page → back to the search/connect landing.
@@ -178,6 +190,115 @@ async function renderIssuerIdentity(addr: string): Promise<void> {
   const hasName = name.length > 0 && !name.toLowerCase().startsWith("0x");
   setText("issuerGreeting", hasName ? `Welcome, ${name}` : "Issuer Dashboard");
   setText("issuerSubtitle", `${shortAddr(addr)} - registered issuer`);
+}
+
+/**
+ * Issuer dashboard list — every credential issued FROM this wallet, each with a
+ * one-click Revoke button. Mirrors renderStudentDashboard but filters on the
+ * issuer (2nd indexed arg of CredentialIssued) instead of the holder.
+ */
+async function renderIssuerCredentials(addr: string): Promise<void> {
+  const container = document.getElementById("issuerCreds");
+  if (!container) return;
+  if (!credential || !provider) {
+    container.innerHTML = `<div class="empty-state">Wallet not connected.</div>`;
+    return;
+  }
+
+  let issuedLogs: EventLog[] = [];
+  try {
+    const filter = (credential as Contract).filters.CredentialIssued(null, addr, null);
+    issuedLogs   = (await (credential as Contract).queryFilter(filter, 0, "latest")) as EventLog[];
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state">Failed to load credentials: ${errMsg(e)}</div>`;
+    return;
+  }
+
+  if (issuedLogs.length === 0) {
+    container.className = "empty-state";
+    container.innerHTML = "No credentials issued from this wallet yet.";
+    return;
+  }
+
+  // Newest first (by blockNumber, then logIndex as tiebreaker).
+  issuedLogs.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
+    return (b.index ?? 0) - (a.index ?? 0);
+  });
+
+  // Revocation status per credHash (parallel).
+  const revokedSet = new Set<string>();
+  await Promise.all(issuedLogs.map(async (ev) => {
+    const h = ev.args[0] as string;
+    try {
+      const revFilter = (credential as Contract).filters.CredentialRevoked(h);
+      const revLogs   = await (credential as Contract).queryFilter(revFilter, 0, "latest");
+      if (revLogs.length > 0) revokedSet.add(h);
+    } catch (e) {
+      console.warn(`Revoke check for ${h.slice(0, 10)}… failed:`, errMsg(e));
+    }
+  }));
+
+  // Issued block timestamps (parallel).
+  const issuedDates = await Promise.all(issuedLogs.map(async (ev) => {
+    try {
+      const block = await provider!.getBlock(ev.blockNumber);
+      return block ? formatTs(Number(block.timestamp)) : "Unknown";
+    } catch {
+      return "Unknown";
+    }
+  }));
+
+  // Sidecar metadata (parallel) for human-readable titles — same source the
+  // student dashboard uses; falls back to a hash title on failure.
+  const metas: CredMeta[] = await Promise.all(issuedLogs.map(async (ev) => {
+    const h = ev.args[0] as string;
+    try {
+      const uri: string = await (credential as Contract).getMetadataURI(h);
+      return await fetchCredentialMetadata(uri);
+    } catch (e) {
+      console.warn(`Metadata fetch for ${h.slice(0, 10)}… failed:`, errMsg(e));
+      return { kind: "error", message: errMsg(e) };
+    }
+  }));
+
+  container.className = "";
+  container.innerHTML = "";
+  issuedLogs.forEach((ev, i) => {
+    const credHash  = ev.args[0] as string;
+    const holder    = ev.args[2] as string;
+    const isRevoked = revokedSet.has(credHash);
+    const sh        = shortHash(credHash);
+    const { title, subtitle } = cardTitleFromMeta(metas[i], credHash);
+
+    const card = document.createElement("div");
+    card.className = `cred-card${isRevoked ? " revoked" : ""}`;
+    card.dataset.hash = credHash;
+    card.innerHTML = `
+      <div class="cred-title">
+        <div>
+          <h4>${escapeHtml(title)}</h4>
+          <div class="cred-subtitle">${escapeHtml(subtitle)}</div>
+        </div>
+        <div>
+          ${isRevoked
+            ? `<span class="dash-badge warn">Revoked</span>`
+            : `<span class="dash-badge ok">Active</span>`}
+        </div>
+      </div>
+      <div class="cred-meta">
+        <span class="k">Holder</span><span class="v cred-hash">${holder}</span>
+        <span class="k">Issued</span><span class="v">${issuedDates[i]}</span>
+        <span class="k">Hash</span><span class="v cred-hash">${credHash}</span>
+      </div>
+      ${isRevoked ? "" : `
+      <div class="cred-actions">
+        <button class="btn-danger" onclick="revokeCredentialByHash('${credHash}', this)">Revoke Credential</button>
+      </div>`}
+      <div id="revokeResult_${sh}" class="result"></div>
+    `;
+    container.appendChild(card);
+  });
 }
 
 async function detectAndRoute(addr: string): Promise<void> {
@@ -274,6 +395,7 @@ async function detectAndRoute(addr: string): Promise<void> {
   if (role === "issuer") {
     showView("viewIssuer");
     renderIssuerIdentity(addr).catch((e) => console.warn("renderIssuerIdentity:", errMsg(e)));
+    renderIssuerCredentials(addr).catch((e) => console.warn("renderIssuerCredentials:", errMsg(e)));
     renderPendingReissues(addr);
   } else if (role === "student") {
     showView("viewStudent");
@@ -350,7 +472,7 @@ function refreshMajors(prefix: string): void {
 }
 
 function populateDegreeFields(): void {
-  for (const prefix of ["issue", "revoke", "verify", "reissue"]) {
+  for (const prefix of ["issue", "verify", "reissue"]) {
     fillSelect(`${prefix}Level`, DEGREE_LEVELS, "Select level…");
     fillSelect(`${prefix}Dept`,  DEPARTMENTS,   "Select department…");
     refreshMajors(prefix); // initialize datalist (empty until dept chosen)
@@ -861,20 +983,23 @@ async function doIssueCredential(btn: HTMLButtonElement): Promise<void> {
   }
 }
 
-// ─── ISSUER: Revoke credential ────────────────────────────────────────────────
-async function doRevokeCredential(btn: HTMLButtonElement): Promise<void> {
+// ─── ISSUER: Revoke credential by hash (from the issued-credentials list) ──────
+async function revokeCredentialByHash(credHash: string, btn: HTMLButtonElement): Promise<void> {
+  const resultId = `revokeResult_${shortHash(credHash)}`;
   setLoading(btn, true);
   try {
     await ensureConnected();
-    const credHash = getCredHashFromPrefix("revoke");
     const tx = await (credential as Contract).revokeCredential(credHash);
-    setResult("revokeResult", "pending", `⏳ Pending… ${txLink(tx.hash)}`);
+    setResult(resultId, "pending", `⏳ Pending… ${txLink(tx.hash)}`);
     await tx.wait();
-    setResult("revokeResult", "success",
-      `✅ Revoked!<span class="mono">${credHash}</span>${txLink(tx.hash)}`);
+    setResult(resultId, "success", `✅ Revoked! ${txLink(tx.hash)}`);
+    // Re-render so this card flips to Revoked and loses its button.
+    if (connectedAddr) {
+      renderIssuerCredentials(connectedAddr).catch((e) =>
+        console.warn("renderIssuerCredentials:", errMsg(e)));
+    }
   } catch (e) {
-    setResult("revokeResult", "error", `❌ ${errMsg(e)}`);
-  } finally {
+    setResult(resultId, "error", `❌ ${errMsg(e)}`);
     setLoading(btn, false);
   }
 }
@@ -1016,9 +1141,9 @@ async function doVerify(btn: HTMLButtonElement): Promise<void> {
     loadDashboardDetails(credHash).catch((e) => {
       // Non-fatal — dashboard status is already shown; log error to console
       console.warn("Dashboard detail fetch failed:", errMsg(e));
-      setHtml("dashHolder",  `<span class="dash-val" style="color:var(--muted)">Could not load</span>`);
-      setHtml("dashIssued",  `<span class="dash-val" style="color:var(--muted)">Could not load</span>`);
-      setHtml("dashRevoked", `<span class="dash-val" style="color:var(--muted)">Could not load</span>`);
+      setHtml("dashHolder",  `<span class="dash-val text-muted">Could not load</span>`);
+      setHtml("dashIssued",  `<span class="dash-val text-muted">Could not load</span>`);
+      setHtml("dashRevoked", `<span class="dash-val text-muted">Could not load</span>`);
     });
 
   } catch (e) {
@@ -1340,6 +1465,26 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     }
   }));
 
+  // Stat cards — chain-derived only (Total + Active). No mock metrics.
+  const totalCount  = issuedLogs.length;
+  const activeCount = totalCount - revokedSet.size;
+  const statsEl = document.getElementById("studentStats");
+  if (statsEl) {
+    const pct = totalCount > 0 ? Math.round((activeCount / totalCount) * 100) : 0;
+    statsEl.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-label">Total Credentials</div>
+        <div class="stat-num">${totalCount}</div>
+        <div class="stat-sub">issued to this wallet</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active</div>
+        <div class="stat-num">${activeCount}</div>
+        <div class="stat-sub">${pct}% active · ${revokedSet.size} revoked</div>
+      </div>`;
+    statsEl.style.display = "";
+  }
+
   // Issued block timestamps (parallel)
   const issuedDates = await Promise.all(issuedLogs.map(async (ev) => {
     try {
@@ -1400,11 +1545,11 @@ async function renderStudentDashboard(addr: string): Promise<void> {
     // Phase 6 — pending / approved / rejected reissue badges.
     let reissueBadge = "";
     if (pendingReq?.status === "pending") {
-      reissueBadge = `<span class="dash-badge pending" style="margin-left:8px">Reissue pending</span>`;
+      reissueBadge = `<span class="dash-badge pending badge-spaced">Reissue pending</span>`;
     } else if (pendingReq?.status === "approved") {
-      reissueBadge = `<span class="dash-badge ok" style="margin-left:8px">Reissued</span>`;
+      reissueBadge = `<span class="dash-badge ok badge-spaced">Reissued</span>`;
     } else if (pendingReq?.status === "rejected") {
-      reissueBadge = `<span class="dash-badge warn" style="margin-left:8px" title="${escapeHtml(pendingReq.rejectReason ?? "")}">Reissue rejected</span>`;
+      reissueBadge = `<span class="dash-badge warn badge-spaced" title="${escapeHtml(pendingReq.rejectReason ?? "")}">Reissue rejected</span>`;
     }
     const reissueBtnDisabled = pendingReq?.status === "pending" ? "disabled" : "";
 
@@ -1439,7 +1584,7 @@ async function renderStudentDashboard(addr: string): Promise<void> {
       <div id="grantForm_${sh}" class="cred-grant-form">
         <input id="grantVerifier_${sh}" placeholder="Verifier address 0x…" />
         <button class="btn-holder" onclick="studentGrantAccess('${credHash}', this)">Grant</button>
-        <button class="btn-issuer" onclick="studentRevokeAccess('${credHash}', this)">Revoke</button>
+        <button class="btn-danger" onclick="studentRevokeAccess('${credHash}', this)">Revoke</button>
       </div>
       <div id="cardResult_${sh}" class="result"></div>
     `;
@@ -1756,7 +1901,7 @@ function renderPendingReissues(addr: string): void {
     const ageMin    = Math.max(0, Math.round((Date.now() - req.requestedAt) / 60000));
     const pdfNote   = req.pdfCid
       ? `Original PDF: <span class="cred-hash">${req.pdfCid}</span>`
-      : `<strong style="color: var(--error-b)">Legacy credential - issuer must upload a fresh PDF on approval.</strong>`;
+      : `<strong class="text-danger">Legacy credential - issuer must upload a fresh PDF on approval.</strong>`;
 
     const card = document.createElement("div");
     card.className = "reissue-req-card";
@@ -1765,7 +1910,7 @@ function renderPendingReissues(addr: string): void {
       <div class="rr-head">
         <div>
           <strong>From ${escapeHtml(holderTxt)}</strong>
-          <div style="font-size:0.72rem; color: var(--muted)">${ageMin} min ago</div>
+          <div class="rr-sub">${ageMin} min ago</div>
         </div>
         <span class="dash-badge pending">Pending</span>
       </div>
@@ -1781,7 +1926,7 @@ function renderPendingReissues(addr: string): void {
       </div>
       <div class="rr-actions">
         <button class="btn-issuer" onclick="approveReissue('${req.id}', this)">Approve & Reissue</button>
-        <button class="btn-mail"   onclick="rejectReissue('${req.id}', this)">Reject</button>
+        <button class="btn-danger" onclick="rejectReissue('${req.id}', this)">Reject</button>
       </div>
       <div id="reissueReqResult_${req.id}" class="result"></div>
     `;
@@ -1965,7 +2110,7 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
           <div class="rr-head">
             <div>
               <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
-              <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
+              <div class="rr-sub">${escapeHtml(short)}</div>
             </div>
             <span class="dash-badge pending">Pending</span>
           </div>
@@ -1977,7 +2122,7 @@ async function renderPendingSchoolApps(ownerAddr: string): Promise<void> {
           </div>
           <div class="rr-actions">
             <button class="btn-issuer" onclick="approveSchoolApp('${p.applicant}', this)">Approve &amp; Register</button>
-            <button class="btn-mail"   onclick="rejectSchoolApp('${p.applicant}', this)">Reject</button>
+            <button class="btn-danger" onclick="rejectSchoolApp('${p.applicant}', this)">Reject</button>
           </div>
           <div id="schoolAppResult_${p.applicant}" class="result"></div>
         </div>`;
@@ -2086,7 +2231,7 @@ async function renderPendingStudentApps(adminAddr: string): Promise<void> {
           <div class="rr-head">
             <div>
               <strong>${escapeHtml(meta.name ?? "(no name)")}</strong>
-              <div style="font-size:0.72rem; color: var(--muted)">${escapeHtml(short)}</div>
+              <div class="rr-sub">${escapeHtml(short)}</div>
             </div>
             <span class="dash-badge pending">Pending</span>
           </div>
@@ -2097,7 +2242,7 @@ async function renderPendingStudentApps(adminAddr: string): Promise<void> {
           </div>
           <div class="rr-actions">
             <button class="btn-issuer" onclick="approveStudentApp('${p.applicant}', this)">Approve &amp; Register</button>
-            <button class="btn-mail"   onclick="rejectStudentApp('${p.applicant}', this)">Reject</button>
+            <button class="btn-danger" onclick="rejectStudentApp('${p.applicant}', this)">Reject</button>
           </div>
           <div id="studentAppResult_${p.applicant}" class="result"></div>
         </div>`;
@@ -2166,14 +2311,14 @@ function adminRow(addr: string, isOwnerRow: boolean, viewerIsOwner: boolean): st
     ? '<span class="dash-badge success">Owner</span>'
     : '<span class="dash-badge">Admin</span>';
   const removeBtn = (viewerIsOwner && !isOwnerRow)
-    ? `<button class="btn-mail" onclick="removeAdminWallet('${addr}', this)">Remove</button>`
+    ? `<button class="btn-danger" onclick="removeAdminWallet('${addr}', this)">Remove</button>`
     : "";
   return `
     <div class="reissue-req-card" id="adminRow_${addr}">
       <div class="rr-head">
         <div>
           <strong>${escapeHtml(short)}</strong>
-          <div class="cred-hash" style="font-size:0.72rem; color: var(--muted)">${escapeHtml(addr)}</div>
+          <div class="cred-hash rr-sub">${escapeHtml(addr)}</div>
         </div>
         ${badge}
       </div>
@@ -2419,7 +2564,7 @@ async function renderPublicResult(
   const container = document.getElementById("publicResultList");
   if (!container) return;
 
-  container.innerHTML = `<div class="dash-loading" style="padding:24px 0;">Loading credential details…</div>`;
+  container.innerHTML = `<div class="dash-loading loading-block">Loading credential details…</div>`;
 
   // Degree metadata per credential (parallel; graceful fallback to event URI).
   const metas: CredMeta[] = await Promise.all(entries.map(async (e) => {
@@ -2547,7 +2692,7 @@ window.switchAccount      = switchAccount;
 window.updateCredHash     = updateCredHash;
 window.doRegisterIssuer   = doRegisterIssuer;
 window.doIssueCredential  = doIssueCredential;
-window.doRevokeCredential = doRevokeCredential;
+window.revokeCredentialByHash = revokeCredentialByHash;
 window.doGrantAccess      = doGrantAccess;
 window.doRevokeAccess     = doRevokeAccess;
 window.doDownloadDiploma  = doDownloadDiploma;
