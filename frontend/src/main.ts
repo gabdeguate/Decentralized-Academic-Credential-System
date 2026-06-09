@@ -61,6 +61,7 @@ declare global {
     studentDownload:    (credHash: string, btn: HTMLButtonElement) => Promise<void>;
     studentGrantAccess: (credHash: string, btn: HTMLButtonElement) => Promise<void>;
     studentRevokeAccess:(credHash: string, btn: HTMLButtonElement) => Promise<void>;
+    verifierReverify:   (credHash: string, btn: HTMLButtonElement) => Promise<void>;
     toggleGrantForm:    (short: string) => void;
     requestReissuance:  (credHash: string, issuerAddr: string) => void;
     toggleLabelEdit:    (credHash: string) => void;
@@ -151,6 +152,14 @@ function profileKey(addr: string): string {
 
 function issuerProfileKey(addr: string): string {
   return `dacs:issuerProfile:${addr.toLowerCase()}`;
+}
+
+// Verifier (company) accounts are self-serve and frontend-only: the contract
+// gates nothing on a verifier wallet, so the "account" is just a local profile
+// that routes this wallet to the verifier dashboard. Separate key from the
+// student profileKey so the two roles can't collide.
+function verifierProfileKey(addr: string): string {
+  return `dacs:verifierProfile:${addr.toLowerCase()}`;
 }
 
 function rememberIssuerProfile(
@@ -355,9 +364,13 @@ async function detectAndRoute(addr: string): Promise<void> {
     return;
   }
 
+  const verifierProfile = localStorage.getItem(verifierProfileKey(addr));
+
   const issuerMatch   = isIssuer === true;
   const studentMatch  = isStudent === true || (issuedLogs as unknown[]).length > 0 || profile !== null;
-  const verifierMatch = (grantedLogs as unknown[]).length > 0;
+  // Granted access OR a self-serve verifier profile — the latter lets a freshly
+  // signed-up company reach its dashboard before any diploma has been shared.
+  const verifierMatch = (grantedLogs as unknown[]).length > 0 || verifierProfile !== null;
 
   // Owner is allowed to also be issuer-registered (one role: issuer). Multi-role
   // only fires when the wallet matches across DIFFERENT role categories.
@@ -408,6 +421,10 @@ async function detectAndRoute(addr: string): Promise<void> {
     });
   } else {
     showView("viewVerifier");
+    renderVerifierDashboard(addr).catch((e) => {
+      const el = document.getElementById("verifierInbox");
+      if (el) el.innerHTML = `<div class="empty-state">Error: ${errMsg(e)}</div>`;
+    });
   }
 }
 
@@ -496,10 +513,12 @@ function showCreateAccount(mode: "form" | "pending" | "rejected"): void {
 // Toggle the Student/School sub-forms based on the selected role radio.
 function toggleSignupRole(): void {
   const role = (document.querySelector('input[name="signupRole"]:checked') as HTMLInputElement | null)?.value ?? "student";
-  const studentForm = document.getElementById("signupStudentForm");
-  const schoolForm  = document.getElementById("signupSchoolForm");
-  if (studentForm) studentForm.style.display = role === "student" ? "block" : "none";
-  if (schoolForm)  schoolForm.style.display  = role === "school"  ? "block" : "none";
+  const studentForm  = document.getElementById("signupStudentForm");
+  const schoolForm   = document.getElementById("signupSchoolForm");
+  const verifierForm = document.getElementById("signupVerifierForm");
+  if (studentForm)  studentForm.style.display  = role === "student"  ? "block" : "none";
+  if (schoolForm)   schoolForm.style.display   = role === "school"   ? "block" : "none";
+  if (verifierForm) verifierForm.style.display = role === "verifier" ? "block" : "none";
 }
 
 // From the "rejected" panel: jump back to the form with the rejected role preselected.
@@ -532,6 +551,10 @@ async function submitCreateAccount(btn: HTMLButtonElement): Promise<void> {
   const role = (document.querySelector('input[name="signupRole"]:checked') as HTMLInputElement | null)?.value ?? "student";
   if (role === "school") {
     await submitSchoolApplication(btn);
+    return;
+  }
+  if (role === "verifier") {
+    await submitVerifierApplication(btn);
     return;
   }
   setLoading(btn, true);
@@ -600,6 +623,32 @@ async function submitSchoolApplication(btn: HTMLButtonElement): Promise<void> {
       docCid,
     });
     setResult("signupResult", "success", "Application submitted. Routing...");
+    await detectAndRoute(connectedAddr);
+  } catch (e) {
+    setResult("signupResult", "error", errMsg(e));
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// Verifier (company) self-serve signup. No admin gate and no on-chain record —
+// the contract lets any wallet verify a credential a holder has shared with it,
+// so the account is just a local profile that routes this wallet to the verifier
+// dashboard. Students "send" diplomas here via grantVerifierAccess(hash, thisWallet).
+async function submitVerifierApplication(btn: HTMLButtonElement): Promise<void> {
+  setLoading(btn, true);
+  try {
+    if (!connectedAddr) throw new Error("Wallet not connected.");
+    const name    = getVal("verifierCompanyName");
+    const contact = getVal("verifierContact");
+    if (!name) throw new Error("Enter your company name.");
+
+    localStorage.setItem(
+      verifierProfileKey(connectedAddr),
+      JSON.stringify({ name, contact, createdAt: Date.now() }),
+    );
+
+    setResult("signupResult", "success", "Verifier account created. Routing...");
     await detectAndRoute(connectedAddr);
   } catch (e) {
     setResult("signupResult", "error", errMsg(e));
@@ -1602,12 +1651,12 @@ async function renderStudentDashboard(addr: string): Promise<void> {
       </div>
       <div class="cred-actions">
         <button class="btn-dl"     onclick="studentDownload('${credHash}', this)">Download PDF</button>
-        <button class="btn-holder" onclick="toggleGrantForm('${sh}')">Manage Access</button>
+        <button class="btn-holder" onclick="toggleGrantForm('${sh}')">Send to a verifier</button>
         <button class="btn-mail"   onclick="requestReissuance('${credHash}', '${issuerAddr}')" ${reissueBtnDisabled}>Request Re-issuance</button>
       </div>
       <div id="grantForm_${sh}" class="cred-grant-form">
-        <input id="grantVerifier_${sh}" placeholder="Verifier address 0x…" />
-        <button class="btn-holder" onclick="studentGrantAccess('${credHash}', this)">Grant</button>
+        <input id="grantVerifier_${sh}" placeholder="Verifier wallet address 0x…" />
+        <button class="btn-holder" onclick="studentGrantAccess('${credHash}', this)">Send</button>
         <button class="btn-danger" onclick="studentRevokeAccess('${credHash}', this)">Revoke</button>
       </div>
       <div id="cardResult_${sh}" class="result"></div>
@@ -1748,7 +1797,7 @@ async function studentGrantAccess(credHash: string, btn: HTMLButtonElement): Pro
     setResult(`cardResult_${sh}`, "pending", `⏳ Pending… ${txLink(tx.hash)}`);
     await tx.wait();
     setResult(`cardResult_${sh}`, "success",
-      `✅ Access granted to ${verifier.slice(0, 8)}… ${txLink(tx.hash)}`);
+      `✅ Diploma sent to ${verifier.slice(0, 8)}… ${txLink(tx.hash)}`);
   } catch (e) {
     setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
   } finally {
@@ -1769,6 +1818,149 @@ async function studentRevokeAccess(credHash: string, btn: HTMLButtonElement): Pr
     await tx.wait();
     setResult(`cardResult_${sh}`, "success",
       `✅ Access revoked for ${verifier.slice(0, 8)}… ${txLink(tx.hash)}`);
+  } catch (e) {
+    setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+// ─── VERIFIER DASHBOARD — inbox of diplomas students shared with this wallet ──
+//
+// A holder "sends" a diploma to a verifier by calling grantVerifierAccess(hash,
+// verifierWallet). We discover those by querying VerifierAccessGranted with this
+// wallet as the indexed `verifier`, then verify each one live (msg.sender is the
+// connected verifier, so a later revokeVerifierAccess shows up as invalid).
+async function renderVerifierDashboard(addr: string): Promise<void> {
+  const container = document.getElementById("verifierInbox");
+  if (!container) return;
+  if (!credential || !provider) {
+    container.innerHTML = `<div class="empty-state">Wallet not connected.</div>`;
+    return;
+  }
+
+  // Greeting from the self-serve verifier profile (if any).
+  const profileRaw = localStorage.getItem(verifierProfileKey(addr));
+  if (profileRaw) {
+    try {
+      const p = JSON.parse(profileRaw) as { name?: string };
+      if (p.name) setText("verifierGreeting", `Welcome, ${p.name}`);
+    } catch { /* corrupted profile JSON — keep default greeting */ }
+  }
+  setText("verifierSubtitle", shortAddr(addr));
+
+  container.innerHTML = `<div class="empty-state">Loading shared diplomas…</div>`;
+
+  let grantLogs: EventLog[] = [];
+  const latestBlock = await provider.getBlockNumber();
+  try {
+    const filter = (credential as Contract).filters.VerifierAccessGranted(null, null, addr);
+    grantLogs    = await queryFilterSafe(credential as Contract, filter, latestBlock);
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state">Failed to load shared diplomas: ${errMsg(e)}</div>`;
+    return;
+  }
+
+  // Dedup by credHash (a holder may grant the same diploma more than once).
+  const seen = new Set<string>();
+  const credHashes: string[] = [];
+  for (const ev of grantLogs) {
+    const h = (ev.args[0] as string).toLowerCase();
+    if (seen.has(h)) continue;
+    seen.add(h);
+    credHashes.push(ev.args[0] as string);
+  }
+
+  if (credHashes.length === 0) {
+    container.innerHTML =
+      `<div class="empty-state">No diplomas have been shared with this wallet yet. ` +
+      `Give your wallet address to a student so they can send you their diploma.</div>`;
+    return;
+  }
+
+  // Per-credential: live verify status, metadata (title/PDF), and the original
+  // CredentialIssued log for issuer/holder/date.
+  type Row = {
+    credHash: string; valid: boolean; reason: string;
+    meta: CredMeta; issuer: string; holder: string; issued: string;
+  };
+  const rows: Row[] = await Promise.all(credHashes.map(async (credHash): Promise<Row> => {
+    const [verifyRes, meta, issuedLogs] = await Promise.all([
+      (credential as Contract).verifyCredential(credHash)
+        .catch((e: unknown) => [false, errMsg(e)] as [boolean, string]),
+      (credential as Contract).getMetadataURI(credHash)
+        .then((uri: string) => fetchCredentialMetadata(uri))
+        .catch((e: unknown): CredMeta => ({ kind: "error", message: errMsg(e) })),
+      queryFilterSafe(credential as Contract,
+        (credential as Contract).filters.CredentialIssued(credHash), latestBlock)
+        .catch(() => [] as EventLog[]),
+    ]);
+    const [valid, reason] = verifyRes as [boolean, string];
+    const issuedEv = (issuedLogs as EventLog[])[0];
+    let issued = "Unknown";
+    if (issuedEv) {
+      try {
+        const block = await provider!.getBlock(issuedEv.blockNumber);
+        if (block) issued = formatTs(Number(block.timestamp));
+      } catch { /* keep Unknown */ }
+    }
+    return {
+      credHash, valid, reason, meta,
+      issuer: issuedEv ? (issuedEv.args[1] as string) : "",
+      holder: issuedEv ? (issuedEv.args[2] as string) : "",
+      issued,
+    };
+  }));
+
+  container.innerHTML = "";
+  for (const row of rows) {
+    const sh = shortHash(row.credHash);
+    const { title, subtitle } = cardTitleFromMeta(row.meta, row.credHash);
+    const badge = row.valid
+      ? `<span class="dash-badge ok">Verified</span>`
+      : `<span class="dash-badge warn" title="${escapeHtml(row.reason)}">${escapeHtml(row.reason || "Invalid")}</span>`;
+
+    const card = document.createElement("div");
+    card.className = `cred-card${row.valid ? "" : " revoked"}`;
+    card.dataset.hash = row.credHash;
+    // Download reuses studentDownload — it is holder-agnostic (resolves metadata
+    // → pdfCid → Pinata) and writes to the same cardResult_<sh> element.
+    card.innerHTML = `
+      <div class="cred-title">
+        <div>
+          <h4>${escapeHtml(title)}</h4>
+          <div class="cred-subtitle">${escapeHtml(subtitle)}</div>
+        </div>
+        <div>${badge}</div>
+      </div>
+      <div class="cred-meta">
+        <span class="k">Holder</span><span class="v cred-hash">${row.holder || "—"}</span>
+        <span class="k">Issuer</span><span class="v cred-hash">${row.issuer || "—"}</span>
+        <span class="k">Issued</span><span class="v">${row.issued}</span>
+        <span class="k">Hash</span><span class="v cred-hash">${row.credHash}</span>
+      </div>
+      <div class="cred-actions">
+        <button class="btn-dl"     onclick="studentDownload('${row.credHash}', this)">Download diploma</button>
+        <button class="btn-verify" onclick="verifierReverify('${row.credHash}', this)">Re-verify</button>
+      </div>
+      <div id="cardResult_${sh}" class="result"></div>
+    `;
+    container.appendChild(card);
+  }
+}
+
+async function verifierReverify(credHash: string, btn: HTMLButtonElement): Promise<void> {
+  const sh = shortHash(credHash);
+  setLoading(btn, true);
+  try {
+    await ensureConnected();
+    const [valid, reason]: [boolean, string] =
+      await (credential as Contract).verifyCredential(credHash);
+    if (valid) {
+      setResult(`cardResult_${sh}`, "success", "✅ Verified — credential is valid.");
+    } else {
+      setResult(`cardResult_${sh}`, "error", `❌ ${reason || "Invalid"}`);
+    }
   } catch (e) {
     setResult(`cardResult_${sh}`, "error", `❌ ${errMsg(e)}`);
   } finally {
@@ -2746,6 +2938,7 @@ window.refreshMajors       = refreshMajors;
 window.studentDownload     = studentDownload;
 window.studentGrantAccess  = studentGrantAccess;
 window.studentRevokeAccess = studentRevokeAccess;
+window.verifierReverify    = verifierReverify;
 window.toggleGrantForm     = toggleGrantForm;
 window.requestReissuance   = requestReissuance;
 window.toggleLabelEdit     = toggleLabelEdit;

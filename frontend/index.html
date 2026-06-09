@@ -1390,6 +1390,7 @@
     <div class="role-toggle">
       <label><input type="radio" name="signupRole" value="student" checked onchange="toggleSignupRole()" /> I'm a student</label>
       <label><input type="radio" name="signupRole" value="school" onchange="toggleSignupRole()" /> I represent a school</label>
+      <label><input type="radio" name="signupRole" value="verifier" onchange="toggleSignupRole()" /> I represent a company (verifier)</label>
     </div>
 
     <!-- Student sub-form -->
@@ -1419,6 +1420,19 @@
       <p class="form-note">
         Your application is recorded on-chain; the document is pinned to IPFS. The
         registry owner reviews it and approves or rejects.
+      </p>
+    </div>
+
+    <!-- Verifier (company) sub-form -->
+    <div id="signupVerifierForm" class="signup-form" style="display:none">
+      <label>Company name</label>
+      <input id="verifierCompanyName" placeholder="e.g., Acme Corp" />
+      <label>Contact email (optional)</label>
+      <input id="verifierContact" type="email" placeholder="hr@example.com" />
+      <p class="form-note">
+        No approval needed. Your account is stored in this browser and routes you to
+        the verifier dashboard. Students share a diploma with you by sending it to
+        your wallet address — it then appears here for verification.
       </p>
     </div>
 
@@ -1607,11 +1621,18 @@
       <div class="panel-header">
         <div class="panel-icon verifier">V</div>
         <div>
-          <h2>Verifier Dashboard</h2>
-          <p>Connected wallet is msg.sender — must be on allowlist</p>
+          <h2 id="verifierGreeting">Verifier Dashboard</h2>
+          <p id="verifierSubtitle">Connected wallet is msg.sender — must be on allowlist</p>
         </div>
       </div>
       <div class="panel-body">
+
+        <div class="section section-compact">
+          <h3>Diplomas shared with you</h3>
+          <div id="verifierInbox">
+            <div class="empty-state">Loading shared diplomas…</div>
+          </div>
+        </div>
 
         <div class="section section-compact">
           <h3>Verify Credential</h3>

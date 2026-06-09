@@ -14,13 +14,14 @@ Today a diploma is a piece of paper or a PDF. It can be faked, and an employer w
 wants to check it has to phone the university and wait. **DACS replaces that trust
 problem with math.**
 
-Three kinds of people use the system:
+Four roles appear in the system, but only schools and students create applicant
+accounts:
 
 | Role | What they do |
 |---|---|
 | **School (Issuer)** | Issues diplomas to students |
 | **Student (Holder)** | Receives diplomas, controls who can see them |
-| **Verifier (Employer)** | Checks whether a diploma is real |
+| **Verifier (Employer / Company)** | Uses public search, or connects an allowlisted wallet to run the stricter verification check |
 | **Admin** | Approves which schools and students are allowed in |
 
 The system is built on a **blockchain** (Ethereum). Think of the blockchain as a
@@ -51,8 +52,9 @@ Two important properties make this useful:
   out the original diploma details. It is a one-way street.
 
 This is the same family of math that secures passwords and Bitcoin. In our code the
-fingerprint is built **the same way on the website and inside the contract**, so the
-two always agree — the technical term is `solidityPackedKeccak256`.
+website builds the fingerprint with ethers' `solidityPackedKeccak256`, matching
+Solidity's packed encoding. The contract itself never receives the raw diploma
+fields or recomputes them; it stores and checks the finished `bytes32` fingerprint.
 
 > **In one line:** the blockchain stores a tamper-proof fingerprint, never the
 > private diploma itself.
@@ -108,11 +110,13 @@ If not, it stops with a clear error like `NotAuthorizedIssuer`.
 Every time something happens — a school is approved, a diploma is issued, a diploma
 is revoked — the contract writes a permanent note called an **event**.
 
-Why this matters: the website doesn't keep its own private database that could get
-out of sync or be tampered with. Instead, **the website rebuilds everything by
-reading the blockchain's event history.** When a student logs in, the page asks the
+Why this matters: for approvals, issuances, revocations, and access grants, the
+website does not keep a separate private database that could get out of sync or be
+tampered with. Instead, **the website rebuilds the core credential state by reading
+the blockchain's event history.** When a student logs in, the page asks the
 blockchain "show me every diploma ever issued to this wallet" and displays them.
-The blockchain is the single source of truth.
+PDFs and readable metadata live on IPFS, while a few prototype conveniences like
+local labels and re-issuance requests live in browser `localStorage`.
 
 Technique: this is called an **event-driven** design. We query past events with
 filters (e.g. "all diplomas for this student") to reconstruct the current state.
@@ -136,12 +140,14 @@ sends you to the right dashboard — no menus to pick from:
 1. **Are you the Admin?** → Admin dashboard
 2. **Are you an approved school?** → Issuer dashboard
 3. **Are you a student / do you hold diplomas?** → Student dashboard
-4. **None of the above?** → a sign-up / "application pending" screen
+4. **Are you an allowlisted verifier wallet?** → Verifier dashboard
+5. **None of the above?** → student/school application screen, or use public
+   credential search without an account
 
 It checks all of these by reading the blockchain the moment you connect. The admin
-is recognized both by being the contract's official owner **and** by a built-in
-allowlist of admin wallet addresses, so the right person always lands on the admin
-view.
+view is shown for the contract owner, any on-chain admin, and a small frontend
+allowlist of admin wallet addresses. That allowlist only affects routing; protected
+on-chain actions still require the wallet to be the owner or an on-chain admin.
 
 > **In one line:** your wallet is your login, and the system routes you to the
 > correct dashboard automatically.
@@ -150,8 +156,11 @@ view.
 
 ## 6. Sign-up and approval flow (admin validation)
 
-We didn't want anyone to be able to issue fake diplomas, so both schools and
-students must be **approved by the Admin** before they can participate.
+We didn't want anyone to be able to issue fake diplomas or claim a student profile,
+so both schools and students must be **approved by the Admin** before they can
+participate. Employers and companies do **not** create DACS accounts; they use public
+search, or a wallet that a student has explicitly allowlisted for contract-level
+verification.
 
 **The flow:**
 
@@ -190,11 +199,13 @@ itself proves the file hasn't been altered.
 
 We use **Pinata**, a service that keeps IPFS files reliably online. The flow:
 
-1. School uploads the diploma PDF → Pinata returns a CID.
-2. The contract stores only a short reference, `ipfs://<CID>`, alongside the
-   diploma's fingerprint.
-3. Later, a student or verifier downloads the PDF straight from IPFS using that
-   reference.
+1. School uploads the diploma PDF → Pinata returns a PDF CID.
+2. The website pins a small JSON metadata sidecar containing readable degree fields
+   and that PDF CID → Pinata returns a second CID.
+3. The contract stores only `ipfs://<sidecar CID>` alongside the diploma's
+   fingerprint.
+4. Later, dashboards read the sidecar and use its PDF CID to open or download the
+   actual diploma from IPFS.
 
 > **In one line:** big files live on IPFS (tamper-evident, cheap); the blockchain
 > only stores a tiny pointer to them.
@@ -206,9 +217,10 @@ We use **Pinata**, a service that keeps IPFS files reliably online. The flow:
 A diploma belongs to the student, not the school or an employer. So **only the
 student can grant or revoke viewing access.**
 
-When a student wants an employer to verify their degree, they add that employer's
-wallet to the diploma's **allowlist**. The employer can then run a verification and
-get a clear ✅ or ❌. If the student later removes them, the employer loses access.
+When a student wants an employer to run the stricter contract check, they add that
+employer's wallet to the diploma's **allowlist**. The employer does not apply for an
+account; they connect that wallet and get a clear ✅ or ❌ from `verifyCredential`.
+If the student later removes them, that wallet loses verifier-dashboard access.
 
 When a verifier checks a diploma, the contract runs through a strict checklist in
 order and returns the first problem it finds:
@@ -220,13 +232,13 @@ order and returns the first problem it finds:
 
 Only if all four pass does it return "valid."
 
-A logged-in employer gets their own **Verifier dashboard**: they re-enter the diploma
-details the student gave them, the page rebuilds the same fingerprint, and they get an
-instant ✅ or ❌. (For a quick check without logging in at all, see the public lookup in
-section 10.)
+An allowlisted employer wallet can use the **Verifier dashboard**: they re-enter the
+diploma details the student gave them, the page rebuilds the same fingerprint, and
+the contract returns an instant ✅ or ❌ based on the current allowlist and status.
+(For a read-only public record lookup without logging in at all, see section 10.)
 
-> **In one line:** the student is in charge of their own privacy — verification is
-> permission-based, not open to the world.
+> **In one line:** the student controls the contract's yes/no verification flow; the
+> separate public lookup is a read-only event and metadata browser.
 
 ---
 
@@ -244,13 +256,15 @@ showing its short address.
 
 Each diploma card also lets the student **download the PDF**, **manage who can see it**,
 and **request a re-issuance** — for example to get a fresh copy after an old one was
-revoked. Importantly, the student **cannot change any diploma details**: the degree,
-major, dates, and everything else stay locked. They fill in only a short **reason** for
-the request. That request appears in the issuing school's dashboard; when the school
-approves, it **revokes the old diploma and issues a brand-new one with the exact same
-details**. Anyone who later looks up that student's wallet sees **both** copies — the old
-one marked *Revoked* and the new one marked *Active*, each with its issue date — so the
-most recent valid diploma is always clear.
+revoked. Importantly, for current JSON-backed credentials, the student **cannot change
+any diploma details**: the degree, major, dates, and everything else stay locked. They
+fill in only a short **reason** for the request. In this prototype, that request is a
+same-browser `localStorage` queue item that appears in the issuing school's dashboard.
+When the school approves, the on-chain part happens: it **revokes the old diploma and
+issues a brand-new one with the exact same details**. Anyone who later looks up that
+student's wallet sees **both** copies — the old one marked *Revoked* and the new one
+marked *Active*, each with its issue date — so the most recent valid diploma is always
+clear.
 
 (Behind the scenes, the blockchain refuses to store the same fingerprint twice, even
 after a diploma is revoked. So the student's reason is mixed into the fingerprint, giving
@@ -261,25 +275,26 @@ the new copy its own unique code while keeping every diploma detail identical.)
 
 ---
 
-## 10. Anyone can verify a diploma — no login needed (public lookup)
+## 10. Anyone can look up public records — no login needed (public lookup)
 
-Employers and registrars often just want to **check** a diploma, not log in. The home
-page has a **"Verify a Credential"** box: paste a student's wallet address, hit
+Employers, companies, and registrars often just want to **inspect public credential
+records**, not create an account. The home page has a **Credential search** panel:
+paste a student's wallet address, hit
 **Search**, and you land on a full results page that looks just like the student
 dashboard — **no wallet, no login**.
 
 That page shows every credential issued to that wallet, **grouped by the university**
 that issued it (by readable name), and for each one:
 
-- the **degree** (e.g. "Bachelor of Computer Science"), pulled from the diploma's
-  stored details,
+- the **degree** (e.g. "Bachelor of Computer Science"), pulled from the IPFS metadata
+  sidecar when available,
 - a **View PDF** link to the actual diploma on IPFS,
 - a **View on Etherscan** link to the exact blockchain transaction that issued it — so
   anyone can independently confirm it happened and was never tampered with,
 - and its status badge: ✓ Active, ✗ Revoked, or ⚠ issuer no longer registered.
 
-> **In one line:** paste an address, instantly see real degrees, real diplomas, and the
-> on-chain proof behind each — without an account.
+> **In one line:** paste an address, instantly see issued credential records, diploma
+> links, and the on-chain proof behind each — without an account.
 
 ---
 
@@ -289,19 +304,23 @@ Putting it all together, here is the journey of a single diploma:
 
 1. **School applies** → Admin approves it into the Registry.
 2. **Student applies** → Admin approves them too.
-3. **School issues a diploma**: uploads the PDF to IPFS, the website computes the
-   keccak256 fingerprint, and the contract records the fingerprint + IPFS pointer,
-   emitting a permanent event.
+3. **School issues a diploma**: uploads the PDF and JSON sidecar to IPFS, the website
+   computes the keccak256 fingerprint, and the contract records the fingerprint + sidecar
+   pointer, emitting a permanent event.
 4. **Student logs in**, sees the diploma on their dashboard, downloads the PDF.
-5. **Student grants an employer access.**
-6. **Employer verifies** → gets ✅ valid, and can download the same PDF to read it.
+5. **Student grants an employer wallet access** if the employer needs the allowlisted
+   contract check.
+6. **Employer checks the credential** → either uses public search without an account,
+   or connects the allowlisted wallet and gets ✅ valid from `verifyCredential`.
 7. *(If needed)* **School revokes** the diploma → it permanently shows as invalid to
    everyone.
 8. *(If needed)* **Student requests a re-issuance** — reason only, all details locked →
-   the school approves → the old copy is revoked and an identical new copy is issued.
-   Both appear under the student's wallet: old as *Revoked*, new as *Active*.
+   the prototype stores that request in browser localStorage → the school approves →
+   the old copy is revoked and an identical new copy is issued on-chain. Both appear
+   under the student's wallet: old as *Revoked*, new as *Active*.
 
-Every step above is enforced by code and recorded on a public, unchangeable ledger.
+Every contract action above is enforced by code and recorded on a public, unchangeable
+ledger; the current re-issuance request handoff is frontend-local prototype state.
 
 ---
 
@@ -310,8 +329,8 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 - **Automated tests:** the contracts ship with **104 automated tests** covering every
   rule — who can do what (admins, schools, students), what happens on bad input, and a
   full apply → approve → issue → verify → revoke lifecycle. They all pass.
-- **Public verification:** both contracts are **verified on Etherscan**, meaning the
-  exact source code is published and anyone can read or audit it.
+- **Public chain history:** deployed addresses and issuance transactions are visible
+  on Sepolia Etherscan, so anyone can inspect the on-chain activity and proofs.
 - **Trusted building blocks:** we use **OpenZeppelin**, the industry-standard,
   audited library, for the admin-permission logic rather than rolling our own.
 - **Secrets stay secret:** API keys and private keys live in local files that are
@@ -334,5 +353,5 @@ Every step above is enforced by code and recorded on a public, unchangeable ledg
 | **Admin / Owner** | Admins approve schools & students; the owner is the head admin who can appoint other admins |
 | **onlyAdmin / onlyOwner** | A rule that lets only an admin (or only the owner) run a function |
 | **Revoke** | Permanently mark a diploma (or an access grant) as no longer valid |
-| **Re-issuance** | Student asks for a fresh copy (reason only, details locked); school revokes the old and issues an identical new one |
+| **Re-issuance** | Student asks for a fresh copy (reason only, details locked); the prototype queues the request in localStorage, then the school revokes the old credential and issues an identical new one on-chain |
 | **Sepolia** | Ethereum's free practice network we deployed on |
